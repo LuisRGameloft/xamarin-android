@@ -42,6 +42,7 @@ public class IncrementalClassLoader extends ClassLoader {
 
   @Override
   public Class<?> findClass(String className) throws ClassNotFoundException {
+    Log.v("IncrementalClassLoader", "Finding Class " + className);
     return delegateClassLoader.findClass(className);
   }
 
@@ -56,6 +57,7 @@ public class IncrementalClassLoader extends ClassLoader {
 
     @Override
     public Class<?> findClass(String name) throws ClassNotFoundException {
+      Log.v("DelegateClassLoader", "Finding Class " + name);
       return super.findClass(name);
     }
   }
