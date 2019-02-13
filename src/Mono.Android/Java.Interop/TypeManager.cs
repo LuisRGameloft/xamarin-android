@@ -209,6 +209,10 @@ namespace Java.Interop {
 			if (t != IntPtr.Zero)
 				return Type.GetType (Marshal.PtrToStringAnsi (t));
 
+			if (!JNIEnv.IsRunningOnDesktop) {
+				return null;
+			}
+
 			var type    = (Type) null;
 			int ls      = class_name.LastIndexOf ('/');
 			var package = ls >= 0 ? class_name.Substring (0, ls) : "";
@@ -309,7 +313,7 @@ namespace Java.Interop {
 
 		public static void RegisterType (string java_class, Type t)
 		{
-			string jniFromType = JavaNativeTypeManager.ToJniName (t);
+			string jniFromType = JNIEnv.GetJniName (t);
 			lock (jniToManaged) {
 				Type lookup;
 				if (!jniToManaged.TryGetValue (java_class, out lookup)) {
@@ -356,6 +360,21 @@ namespace Java.Interop {
 						packageLookup.Add (package, _lookups = new List<Converter<string, Type>> ());
 					_lookups.Add (lookup);
 				}
+			}
+		}
+
+		[Register ("mono/android/TypeManager", DoNotGenerateAcw = true)]
+		internal class JavaTypeManager : Java.Lang.Object
+		{
+			[Register ("activate", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Object;[Ljava/lang/Object;)V", "")]
+			static void n_Activate (IntPtr jnienv, IntPtr jclass, IntPtr typename_ptr, IntPtr signature_ptr, IntPtr jobject, IntPtr parameters_ptr)
+			{
+				TypeManager.n_Activate (jnienv, jclass, typename_ptr, signature_ptr, jobject, parameters_ptr);
+			}
+
+			internal static Delegate GetActivateHandler ()
+			{
+				return TypeManager.GetActivateHandler ();
 			}
 		}
 	}

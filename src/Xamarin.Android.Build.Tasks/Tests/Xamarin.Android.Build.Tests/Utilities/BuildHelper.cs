@@ -14,7 +14,8 @@ namespace Xamarin.Android.Build.Tests
 		public static ProjectBuilder CreateApkBuilder (string directory, bool cleanupAfterSuccessfulBuild = false, bool cleanupOnDispose = true)
 		{
 			var ret = CreateDllBuilder (directory, cleanupAfterSuccessfulBuild, cleanupOnDispose);
-			ret.Target = "SignAndroidPackage";
+			//NOTE: since $(BuildingInsideVisualStudio) is set, Build will not happen by default
+			ret.Target = "Build,SignAndroidPackage";
 			return ret;
 		}
 
@@ -23,7 +24,8 @@ namespace Xamarin.Android.Build.Tests
 			return new ProjectBuilder (directory) {
 				CleanupAfterSuccessfulBuild = cleanupAfterSuccessfulBuild,
 				CleanupOnDispose = cleanupOnDispose,
-				Verbosity = LoggerVerbosity.Diagnostic
+				Verbosity = LoggerVerbosity.Diagnostic,
+				Root = Xamarin.Android.Build.Paths.TestOutputDirectory,
 			};
 		}
 	}
@@ -49,7 +51,7 @@ namespace Xamarin.Android.Build.Tests
 					return;
 				}
 			}
-			Assert.Fail (message);
+			Assert.Fail (message ?? $"String did not contain '{text}'!");
 		}
 
 		public static bool ContainsText (this IEnumerable<string> collection, string expected) {

@@ -12,27 +12,31 @@
       Condition=" Exists('$(MSBuildThisFileDirectory)Configuration.OperatingSystem.props') And '$(DoNotLoadOSProperties)' != 'True' "
   />
   <PropertyGroup>
-    <ProductVersion>8.3.99</ProductVersion>
+    <ProductVersion>9.1.199</ProductVersion>
     <!-- Used by the `build-tools/create-vsix` build so that `Mono.Android.Export.dll`/etc. are only included *once* -->
     <!-- Should correspond to the first value from `$(API_LEVELS)` in `build-tools/scripts/BuildEverything.mk` -->
-    <AndroidFirstFrameworkVersion Condition="'$(AndroidFirstFrameworkVersion)' == ''">v2.3</AndroidFirstFrameworkVersion>
+    <AndroidFirstFrameworkVersion Condition="'$(AndroidFirstFrameworkVersion)' == ''">v4.4</AndroidFirstFrameworkVersion>
+    <_IsRunningNuGetRestore Condition="$(RestoreTaskAssemblyFile.EndsWith('NuGet.exe', StringComparison.InvariantCultureIgnoreCase))">True</_IsRunningNuGetRestore>
     <!-- *Latest* *stable* API level binding that we support; used when building src/Xamarin.Android.Build.Tasks -->
-    <AndroidLatestStableApiLevel Condition="'$(AndroidLatestStableApiLevel)' == ''">27</AndroidLatestStableApiLevel>
+    <AndroidLatestStableApiLevel Condition="'$(AndroidLatestStableApiLevel)' == ''">28</AndroidLatestStableApiLevel>
     <AndroidLatestStablePlatformId Condition="'$(AndroidLatestStablePlatformId)' == ''">$(AndroidLatestStableApiLevel)</AndroidLatestStablePlatformId>
-    <AndroidLatestStableFrameworkVersion Condition="'$(AndroidLatestStableFrameworkVersion)'==''">v8.1</AndroidLatestStableFrameworkVersion>
+    <AndroidLatestStableFrameworkVersion Condition="'$(AndroidLatestStableFrameworkVersion)'==''">v9.0</AndroidLatestStableFrameworkVersion>
     <!-- *Latest* (possibly unstable) API level binding that we support; for informational purposes -->
     <AndroidLatestApiLevel Condition="'$(AndroidLatestApiLevel)' == ''">28</AndroidLatestApiLevel>
-    <AndroidLatestPlatformId Condition=" '$(AndroidLatestPlatformId)' == '' ">P</AndroidLatestPlatformId>
-    <AndroidLatestFrameworkVersion Condition="'$(AndroidLatestFrameworkVersion)' == ''">v8.1.99</AndroidLatestFrameworkVersion>
+    <AndroidLatestPlatformId Condition=" '$(AndroidLatestPlatformId)' == '' ">28</AndroidLatestPlatformId>
+    <AndroidLatestFrameworkVersion Condition="'$(AndroidLatestFrameworkVersion)' == ''">v9.0</AndroidLatestFrameworkVersion>
     <!-- The API level and TargetFrameworkVersion for the default Mono.Android.dll build -->
     <AndroidApiLevel Condition=" '$(AndroidApiLevel)' == '' ">$(AndroidLatestStableApiLevel)</AndroidApiLevel>
     <AndroidPlatformId Condition=" '$(AndroidPlatformId)' == '' ">$(AndroidLatestStablePlatformId)</AndroidPlatformId>
-    <AndroidFrameworkVersion Condition=" '$(AndroidFrameworkVersion)' == '' ">$(AndroidLatestStableFrameworkVersion)</AndroidFrameworkVersion>
+    <AndroidFrameworkVersion Condition=" '$(AndroidFrameworkVersion)' == '' And '$(_IsRunningNuGetRestore)' != 'True' ">$(AndroidLatestStableFrameworkVersion)</AndroidFrameworkVersion>
+    <AndroidUseLatestPlatformSdk Condition=" '$(AndroidFrameworkVersion)' == '' And '$(_IsRunningNuGetRestore)' == 'True' ">True</AndroidUseLatestPlatformSdk>
+    <DebugType Condition=" '$(DebugType)' == '' ">portable</DebugType>
   </PropertyGroup>
   <PropertyGroup>
     <AutoProvision Condition=" '$(AutoProvision)' == '' ">False</AutoProvision>
     <AutoProvisionUsesSudo Condition=" '$(AutoProvisionUsesSudo)' == '' ">False</AutoProvisionUsesSudo>
-    <XAInstallPrefix Condition=" '$(XAInstallPrefix)' == '' ">$(MSBuildThisFileDirectory)\bin\$(Configuration)\lib\xamarin.android\</XAInstallPrefix>
+    <XAInstallPrefix Condition=" '$(XAInstallPrefix)' == '' ">$(MSBuildThisFileDirectory)bin\$(Configuration)\lib\xamarin.android\</XAInstallPrefix>
+    <LinuxMingwDependenciesRootDirectory Condition=" '$(LinuxMingwDependenciesRootDirectory)' == '' ">$(MSBuildThisFileDirectory)\bin\Build$(Configuration)\linux-mingw-deps</LinuxMingwDependenciesRootDirectory>
     <HostOS Condition=" '$(HostOS)' == '' And '$(OS)' == 'Windows_NT' ">Windows</HostOS>
     <HostCc Condition=" '$(HostCc)' == '' ">$(HostCc64)</HostCc>
     <HostCxx Condition=" '$(HostCxx)' == '' ">$(HostCxx64)</HostCxx>
@@ -55,6 +59,12 @@
     <AndroidMxeInstallPrefix Condition=" '$(HostOS)' == 'Linux' ">\usr</AndroidMxeInstallPrefix>
     <AndroidSdkDirectory Condition=" '$(AndroidSdkDirectory)' == '' ">$(AndroidToolchainDirectory)\sdk</AndroidSdkDirectory>
     <AndroidNdkDirectory Condition=" '$(AndroidNdkDirectory)' == '' ">$(AndroidToolchainDirectory)\ndk</AndroidNdkDirectory>
+    <AndroidSdkCmakeDirectory>$(AndroidSdkDirectory)\cmake\3.6.4111459</AndroidSdkCmakeDirectory>
+    <CmakePath Condition=" '$(CmakePath)' == '' ">$(AndroidSdkCmakeDirectory)\bin\cmake</CmakePath>
+    <NinjaPath Condition=" '$(NinjaPath)' == '' ">$(AndroidSdkCmakeDirectory)\bin\ninja</NinjaPath>
+    <GradleHome Condition=" '$(GradleHome)' == '' ">$(MSBuildThisFileDirectory)build-tools\gradle</GradleHome>
+    <GradleWPath Condition=" '$(GradleWPath)' == '' ">$(GradleHome)\gradlew</GradleWPath>
+    <GradleArgs Condition=" '$(GradleArgs)' == '' ">--stacktrace --no-daemon</GradleArgs>
     <AntDirectory>$(AndroidToolchainDirectory)\ant</AntDirectory>
     <AntToolPath>$(AntDirectory)\bin</AntToolPath>
     <AndroidSupportedHostJitAbis Condition=" '$(AndroidSupportedHostJitAbis)' == '' ">$(HostOS)</AndroidSupportedHostJitAbis>
@@ -62,10 +72,10 @@
     <JavaInteropSourceDirectory Condition=" '$(JavaInteropSourceDirectory)' == '' ">$(MSBuildThisFileDirectory)external\Java.Interop</JavaInteropSourceDirectory>
     <LlvmSourceDirectory Condition=" '$(LlvmSourceDirectory)' == '' ">$(MSBuildThisFileDirectory)external\llvm</LlvmSourceDirectory>
     <MonoSourceDirectory>$(MSBuildThisFileDirectory)external\mono</MonoSourceDirectory>
-    <MonoRequiredMinimumVersion Condition=" '$(MonoRequiredMinimumVersion)' == '' ">5.10.0</MonoRequiredMinimumVersion>
-    <MonoRequiredMaximumVersion Condition=" '$(MonoRequiredMaximumVersion)' == '' ">5.11.0</MonoRequiredMaximumVersion>
+    <MonoRequiredMinimumVersion Condition=" '$(MonoRequiredMinimumVersion)' == '' ">5.18.0</MonoRequiredMinimumVersion>
+    <MonoRequiredMaximumVersion Condition=" '$(MonoRequiredMaximumVersion)' == '' ">5.19.0</MonoRequiredMaximumVersion>
     <IgnoreMaxMonoVersion Condition=" '$(IgnoreMaxMonoVersion)' == '' ">True</IgnoreMaxMonoVersion>
-    <MonoRequiredDarwinMinimumVersion>$(MonoRequiredMinimumVersion).22</MonoRequiredDarwinMinimumVersion>
+    <MonoRequiredDarwinMinimumVersion>$(MonoRequiredMinimumVersion).249</MonoRequiredDarwinMinimumVersion>
     <LinkerSourceDirectory>$(MSBuildThisFileDirectory)external\mono\external\linker</LinkerSourceDirectory>
     <OpenTKSourceDirectory>$(MSBuildThisFileDirectory)external\opentk</OpenTKSourceDirectory>
     <LibZipSourceDirectory Condition=" '$(LibZipSourceDirectory)' == '' ">$(MSBuildThisFileDirectory)external\libzip</LibZipSourceDirectory>
@@ -73,14 +83,18 @@
     <ProGuardSourceDirectory Condition=" '$(ProGuardSourceDirectory)' == '' ">$(MSBuildThisFileDirectory)external\proguard</ProGuardSourceDirectory>
     <SqliteSourceDirectory Condition=" '$(SqliteSourceDirectory)' == '' ">$(MSBuildThisFileDirectory)external\sqlite</SqliteSourceDirectory>
     <XamarinAndroidSourcePath>$(MSBuildThisFileDirectory)</XamarinAndroidSourcePath>
-    <AllSupported32BitTargetAndroidAbis>armeabi;armeabi-v7a;x86</AllSupported32BitTargetAndroidAbis>
+    <AllSupported32BitTargetAndroidAbis>armeabi-v7a;x86</AllSupported32BitTargetAndroidAbis>
     <AllSupported64BitTargetAndroidAbis>arm64-v8a;x86_64</AllSupported64BitTargetAndroidAbis>
     <AllSupportedTargetAndroidAbis>$(AllSupported32BitTargetAndroidAbis);$(AllSupported64BitTargetAndroidAbis)</AllSupportedTargetAndroidAbis>
-    <XABuildToolsVersion>28-rc1</XABuildToolsVersion>
-    <XABuildToolsFolder Condition="'$(XABuildToolsFolder)' == ''">28.0.0-rc1</XABuildToolsFolder>
+    <XABuildToolsVersion>28.0.3</XABuildToolsVersion>
+    <XABuildToolsFolder Condition="'$(XABuildToolsFolder)' == ''">28.0.3</XABuildToolsFolder>
+    <XAPlatformToolsVersion>28.0.0</XAPlatformToolsVersion>
     <XAIntegratedTests Condition="'$(XAIntegratedTests)' == ''">False</XAIntegratedTests>
+    <XAIncludeProprietaryBits Condition="'$(XAIncludeProprietaryBits)' == ''">False</XAIncludeProprietaryBits>
     <PathSeparator>$([System.IO.Path]::PathSeparator)</PathSeparator>
-    <TestsAotName Condition=" '$(AotAssemblies)' == 'true' ">-Aot</TestsAotName>
+    <_TestsAotName Condition=" '$(AotAssemblies)' == 'true' ">-Aot</_TestsAotName>
+    <_TestsBundleName Condition=" '$(BundleAssemblies)' == 'true' ">-Bundle</_TestsBundleName>
+    <TestsFlavor>$(_TestsAotName)$(_TestsBundleName)</TestsFlavor>
   </PropertyGroup>
   <PropertyGroup>
     <_MingwPrefixTail Condition=" '$(HostOS)' == 'Darwin' ">.static</_MingwPrefixTail>
@@ -108,7 +122,8 @@
     <AndroidToolPath Condition=" '$(AndroidToolPath)' == '' ">$(AndroidSdkFullPath)\tools</AndroidToolPath>
     <AndroidToolsBinPath Condition=" '$(AndroidToolsBinPath)' == '' ">$(AndroidToolPath)\bin</AndroidToolsBinPath>
     <AndroidToolExe Condition=" '$(AndroidToolExe)' == '' ">android</AndroidToolExe>
-    <EmulatorToolPath Condition=" '$(EmulatorToolPath)' == '' ">$(AndroidSdkFullPath)\tools</EmulatorToolPath>
+    <EmulatorVersion Condition=" '$(EmulatorVersion)' == '' ">5194135</EmulatorVersion>
+    <EmulatorToolPath Condition=" '$(EmulatorToolPath)' == '' ">$(AndroidSdkFullPath)\emulator</EmulatorToolPath>
     <EmulatorToolExe Condition=" '$(EmulatorToolExe)' == '' ">emulator</EmulatorToolExe>
     <NdkBuildPath Condition=" '$(NdkBuildPath)' == '' And '$(HostOS)' != 'Windows' ">$(AndroidNdkDirectory)\ndk-build</NdkBuildPath>
     <NdkBuildPath Condition=" '$(NdkBuildPath)' == '' And '$(HostOS)' == 'Windows' ">$(AndroidNdkDirectory)\ndk-build.cmd</NdkBuildPath>
@@ -136,9 +151,6 @@
     <AndroidSupportedTargetJitAbisForConditionalChecks Condition=" !$(AndroidSupportedTargetJitAbisForConditionalChecks.StartsWith (':')) " >:$(AndroidSupportedTargetJitAbisForConditionalChecks)</AndroidSupportedTargetJitAbisForConditionalChecks>
     <AndroidSupportedTargetJitAbisSplit>$(AndroidSupportedTargetJitAbis.Split(':'))</AndroidSupportedTargetJitAbisSplit>
   </PropertyGroup>
-  <ItemGroup>
-    <AndroidSupportedTargetJitAbi Include="$(AndroidSupportedTargetJitAbisSplit)" />
-  </ItemGroup>
 
   <PropertyGroup>
     <AndroidSupportedTargetAotAbisForConditionalChecks>$(AndroidSupportedTargetAotAbis)</AndroidSupportedTargetAotAbisForConditionalChecks>
@@ -149,4 +161,6 @@
   <PropertyGroup>
     <RemapAssemblyRefTool>$(ManagedRuntime) &quot;$(MSBuildThisFileDirectory)bin\Build$(Configuration)\remap-assembly-ref.exe&quot;</RemapAssemblyRefTool>
   </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)build-tools\scripts\Ndk.targets" />
 </Project>

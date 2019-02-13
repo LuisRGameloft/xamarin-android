@@ -239,12 +239,8 @@ namespace Xamarin.Android.Tasks
 					}
 				}
 			}
-			
-			var temp_o  = Path.Combine (Path.GetDirectoryName (file), "__" + Path.GetFileName (file) + ".new");
-			using (TextWriter o = File.CreateText (temp_o))
-				o.Write (code);
-			MonoAndroidHelper.CopyIfChanged (temp_o, file);
-			try { File.Delete (temp_o); } catch (Exception) { }
+
+			MonoAndroidHelper.CopyIfStringChanged (code, file);
 		}
 
 		private void AddRename (string android, string user)
@@ -267,7 +263,7 @@ namespace Xamarin.Android.Tasks
 					var ext = Path.GetExtension (android);
 					var dir = Path.GetDirectoryName (user);
 
-					Log.LogWarning ("Resource target names differ; got '{0}', expected '{1}'.",
+					Log.LogDebugMessage ("Resource target names differ; got '{0}', expected '{1}'.",
 						Path.Combine (dir, Path.GetFileName (to) + ext),
 						Path.Combine (dir, Path.GetFileName (curTo) + ext));
 				}

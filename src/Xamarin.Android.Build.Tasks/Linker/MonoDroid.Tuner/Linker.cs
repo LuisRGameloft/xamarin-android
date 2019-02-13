@@ -37,13 +37,13 @@ namespace MonoDroid.Tuner
 
 		static LinkContext CreateLinkContext (LinkerOptions options, Pipeline pipeline, ILogger logger)
 		{
-			var context = new LinkContext (pipeline, options.Resolver);
+			var context = new AndroidLinkContext (pipeline, options.Resolver);
 			if (options.DumpDependencies) {
 				var prepareDependenciesDump = context.Annotations.GetType ().GetMethod ("PrepareDependenciesDump", new Type[] {});
 				if (prepareDependenciesDump != null)
 					prepareDependenciesDump.Invoke (context.Annotations, null);
 			}
-			context.LogInternalExceptions = true;
+			context.LogMessages = true;
 			context.Logger = logger;
 			context.CoreAction = AssemblyAction.Link;
 			context.UserAction = AssemblyAction.Link;
@@ -51,6 +51,7 @@ namespace MonoDroid.Tuner
 			context.SymbolReaderProvider = new DefaultSymbolReaderProvider (true);
 			context.SymbolWriterProvider = new DefaultSymbolWriterProvider ();
 			context.OutputDirectory = options.OutputDirectory;
+			context.PreserveJniMarshalMethods = options.PreserveJniMarshalMethods;
 			return context;
 		}
 
@@ -102,7 +103,6 @@ namespace MonoDroid.Tuner
 			pipeline.AppendStep (new PreserveCrypto ());
 			pipeline.AppendStep (new PreserveCode ());
 
-			pipeline.AppendStep (new RemoveLibraryResourceZip ());
 			pipeline.AppendStep (new RemoveResources (options.I18nAssemblies)); // remove collation tables
 			// end monodroid specific
 
@@ -113,6 +113,7 @@ namespace MonoDroid.Tuner
 			// monodroid tuner steps
 			if (!string.IsNullOrWhiteSpace (options.ProguardConfiguration))
 				pipeline.AppendStep (new GenerateProguardConfiguration (options.ProguardConfiguration));
+			pipeline.AppendStep (new StripEmbeddedLibraries ());
 			// end monodroid specific
 			pipeline.AppendStep (new RegenerateGuidStep ());
 			pipeline.AppendStep (new OutputStep ());

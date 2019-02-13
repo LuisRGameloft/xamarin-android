@@ -2,13 +2,13 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <AndroidNativeLibrary Include="libs\arm64-v8a\libreuse-threads.so" />
-    <AndroidNativeLibrary Include="libs\armeabi\libreuse-threads.so" />
     <AndroidNativeLibrary Include="libs\armeabi-v7a\libreuse-threads.so" />
     <AndroidNativeLibrary Include="libs\x86\libreuse-threads.so" />
     <AndroidNativeLibrary Include="libs\x86_64\libreuse-threads.so" />
   </ItemGroup>
   <Import Project="Mono.Android-Tests.projitems" />
   <Import Project="..\..\..\build-tools\scripts\TestApks.targets" />
+  <Import Project="..\..\..\build-tools\scripts\JavaInteropDllConfigs.targets" />
   <Target Name="BuildNativeLibs"
       BeforeTargets="Build"
       DependsOnTargets="AndroidPrepareForBuild"
@@ -16,5 +16,9 @@
       Outputs="@(AndroidNativeLibrary)">
     <Error Text="Could not locate Android NDK." Condition="!Exists ('$(NdkBuildPath)')" />
     <Exec Command="&quot;$(NdkBuildPath)&quot;" />
+  </Target>
+  <Target Name="EnsureJavaInteropDllConfigs"
+      BeforeTargets="_GenerateJniMarshalMethods"
+      DependsOnTargets="_CreateJavaInteropDllConfigs">
   </Target>
 </Project>

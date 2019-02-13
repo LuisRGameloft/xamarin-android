@@ -1,6 +1,9 @@
 ﻿using Microsoft.Build.CommandLine;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Xml;
 
@@ -13,6 +16,18 @@ namespace Xamarin.Android.Build
 		{
 			var paths = new XABuildPaths ();
 			try {
+				//HACK: running on Mono, MSBuild cannot resolve System.Reflection.Metadata
+				if (!paths.IsWindows) {
+					AppDomain.CurrentDomain.AssemblyResolve += (sender, args) => {
+						var name = new AssemblyName (args.Name);
+						if (name.Name == "System.Reflection.Metadata") {
+							var path = Path.Combine (paths.MSBuildBin, $"{name.Name}.dll");
+							return Assembly.LoadFile (path);
+						}
+						//Return null, to revert to default .NET behavior
+						return null;
+					};
+				}
 				if (!Directory.Exists (paths.XamarinAndroidBuildOutput)) {
 					Console.WriteLine ($"Unable to find Xamarin.Android build output at {paths.XamarinAndroidBuildOutput}");
 					return 1;
@@ -21,31 +36,32 @@ namespace Xamarin.Android.Build
 				//Create a custom xabuild.exe.config
 				var xml = CreateConfig (paths);
 
-				//Hold open the file while creating the symbolic links
-				using (var writer = OpenSysLinksFile (paths)) {
-					//Create link to .NETFramework and .NETPortable directory
-					foreach (var dir in Directory.GetDirectories (paths.SystemProfiles)) {
-						var name = Path.GetFileName (dir);
-						if (!SymbolicLink.Create (Path.Combine (paths.FrameworksDirectory, name), dir)) {
-							return 1;
+				//Symbolic links to be created: key=system, value=in-tree
+				var symbolicLinks = new Dictionary<string, string> ();
+				foreach (var dir in Directory.EnumerateDirectories (paths.SystemFrameworks)) {
+					if (Path.GetFileName (dir) != "MonoAndroid") {
+						symbolicLinks [dir] = Path.Combine (paths.FrameworksDirectory, Path.GetFileName (dir));
+					}
+				}
+				foreach (var dir in paths.SystemTargetsDirectories) {
+					symbolicLinks [dir] = Path.Combine (paths.MSBuildExtensionsPath, Path.GetFileName (dir));
+				}
+				if (symbolicLinks.Values.Any (d => !Directory.Exists (d))) {
+					//Hold open the file while creating the symbolic links
+					using (var writer = OpenSysLinksFile (paths)) {
+						foreach (var pair in symbolicLinks) {
+							var systemDirectory = pair.Key;
+							var symbolicLink = pair.Value;
+							Console.WriteLine ($"[xabuild] creating symbolic link '{symbolicLink}' -> '{systemDirectory}'");
+							if (!SymbolicLink.Create (symbolicLink, systemDirectory)) {
+								return 1;
+							}
+							writer.WriteLine (Path.GetFileName (symbolicLink));
 						}
-						writer.WriteLine (name);
 					}
 				}
 
-				int exitCode = MSBuildApp.Main ();
-				if (exitCode != 0) {
-					Console.WriteLine ($"MSBuildApp.Main exited with {exitCode}, xabuild configuration is:");
-
-					var settings = new XmlWriterSettings {
-						Indent = true,
-						NewLineOnAttributes = true,
-					};
-					using (var writer = XmlTextWriter.Create (Console.Out, settings)) {
-						xml.WriteTo (writer);
-					}
-				}
-				return exitCode;
+				return MSBuildApp.Main ();
 			} finally {
 				//NOTE: these are temporary files
 				foreach (var file in new [] { paths.MSBuildExeTempPath, paths.XABuildConfig }) {
@@ -63,7 +79,7 @@ namespace Xamarin.Android.Build
 			//NOTE: on Windows, the NUnit tests can throw IOException when running xabuild in parallel
 			for (int i = 0;; i++) {
 				try {
-					return File.CreateText (path);
+					return File.AppendText (path);
 				} catch (IOException) {
 					if (i == 2)
 						throw; //Fail after 3 tries
@@ -97,32 +113,10 @@ namespace Xamarin.Android.Build
 
 			var projectImportSearchPaths = toolsets.SelectSingleNode ("projectImportSearchPaths");
 			var searchPaths = projectImportSearchPaths.SelectSingleNode ($"searchPaths[@os='{paths.SearchPathsOS}']") as XmlElement;
-
-			//NOTE: on Linux, the searchPaths XML element does not exist, so we have to create it
-			if (searchPaths == null) {
-				searchPaths = xml.CreateElement ("searchPaths");
-				searchPaths.SetAttribute ("os", paths.SearchPathsOS);
-
-				var property = xml.CreateElement ("property");
-				property.SetAttribute ("name", "MSBuildExtensionsPath");
-				property.SetAttribute ("value", "");
-				searchPaths.AppendChild (property);
-
-				property = xml.CreateElement ("property");
-				property.SetAttribute ("name", "MSBuildExtensionsPath32");
-				property.SetAttribute ("value", "");
-				searchPaths.AppendChild (property);
-
-				property = xml.CreateElement ("property");
-				property.SetAttribute ("name", "MSBuildExtensionsPath64");
-				property.SetAttribute ("value", "");
-				searchPaths.AppendChild (property);
-
-				projectImportSearchPaths.AppendChild (searchPaths);
-			}
-
-			foreach (XmlNode property in searchPaths.SelectNodes ("property[starts-with(@name, 'MSBuildExtensionsPath')]/@value")) {
-				property.Value = string.Join (";", paths.ProjectImportSearchPaths);
+			if (searchPaths != null) {
+				foreach (XmlNode property in searchPaths.SelectNodes ("property[starts-with(@name, 'MSBuildExtensionsPath')]/@value")) {
+					property.Value = "";
+				}
 			}
 
 			xml.Save (paths.XABuildConfig);

@@ -1,23 +1,19 @@
+using Microsoft.Build.Framework;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.IO;
+using System.Linq;
+using System.Net;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.Build.Framework;
-using Microsoft.Build.Utilities;
-using Mono.Cecil;
-using System.Xml;
 using System.Xml.Linq;
-using System.Security.Cryptography;
-using System.Net;
-using System.ComponentModel;
 using Xamarin.Android.Tools;
-using Xamarin.Tools.Zip;
 
-using Java.Interop.Tools.Cecil;
-
-namespace Xamarin.Android.Tasks {
+namespace Xamarin.Android.Tasks
+{
 
 	public class GetAdditionalResourcesFromAssemblies : AsyncTask
 	{
@@ -85,45 +81,45 @@ namespace Xamarin.Android.Tasks {
 			return regex.Replace (path, replaceEnvVar);
 		}
 
-		internal static string ErrorMessage (CustomAttribute attr)
+		internal static string ErrorMessage (CustomAttributeValue<object> attributeValue)
 		{
-			if (!attr.HasProperties)
+			if (attributeValue.NamedArguments.Length == 0)
 				return "";
-			CustomAttributeNamedArgument arg = attr.Properties.FirstOrDefault (p => p.Name == "PackageName");
+			var arg = attributeValue.NamedArguments.FirstOrDefault (p => p.Name == "PackageName");
 			if (arg.Name != null) {
-				string packageName = arg.Argument.Value as string;
+				string packageName = arg.Value as string;
 				if (packageName != null)
 					return string.Format ("Please install package: '{0}' available in SDK installer", packageName);
 			}
-			arg = attr.Properties.FirstOrDefault (p => p.Name == "InstallInstructions");
+			arg = attributeValue.NamedArguments.FirstOrDefault (p => p.Name == "InstallInstructions");
 			if (arg.Name != null) {
-				string instInstructs = arg.Argument.Value as string;
+				string instInstructs = arg.Value as string;
 				if (instInstructs != null)
 					return "Installation instructions: " + instInstructs;
 			}
 			return null;
 		}
 
-		void AddAttributeValue (ICollection<string> items, CustomAttribute attr, string errorCode, string errorFmt,
-			bool isDirectory, string fullPath)
+		void AddAttributeValue (ICollection<string> items, CustomAttributeValue<object> attributeValue, string errorCode, string errorFmt,
+			bool isDirectory, string fullPath, string attributeFullName)
 		{
-			if (!attr.HasConstructorArguments || attr.ConstructorArguments.Count != 1) {
-				LogWarning ("Attribute {0} doesn't have expected one constructor agrument", attr.AttributeType.FullName);
+			if (attributeValue.NamedArguments.Length == 0 || attributeValue.FixedArguments.Length != 1) {
+				LogCodedWarning (errorCode, "Attribute {0} doesn't have expected one constructor agrument", attributeFullName);
 				return;
 			}
 
-			CustomAttributeArgument arg = attr.ConstructorArguments.First ();
+			var arg = attributeValue.FixedArguments.First ();
 			string path = arg.Value as string;
 			if (string.IsNullOrEmpty (path)) {
-				LogWarning ("Attribute {0} contructor argument is empty or not set to string", attr.AttributeType.FullName);
+				LogCodedWarning (errorCode, "Attribute {0} contructor argument is empty or not set to string", attributeFullName);
 				return;
 			}
 			path = SubstituteEnvVariables (path).TrimEnd (Path.DirectorySeparatorChar);
 			string baseDir = null;
-			CustomAttributeNamedArgument sourceUrl = attr.Properties.FirstOrDefault (p => p.Name == "SourceUrl");
-			CustomAttributeNamedArgument embeddedArchive = attr.Properties.FirstOrDefault (p => p.Name == "EmbeddedArchive");
-			CustomAttributeNamedArgument version = attr.Properties.FirstOrDefault (p => p.Name == "Version");
-			CustomAttributeNamedArgument sha1sum = attr.Properties.FirstOrDefault (p => p.Name == "Sha1sum");
+			var sourceUrl = attributeValue.NamedArguments.FirstOrDefault (p => p.Name == "SourceUrl");
+			var embeddedArchive = attributeValue.NamedArguments.FirstOrDefault (p => p.Name == "EmbeddedArchive");
+			var version = attributeValue.NamedArguments.FirstOrDefault (p => p.Name == "Version");
+			var sha1sum = attributeValue.NamedArguments.FirstOrDefault (p => p.Name == "Sha1sum");
 			var isXamarinAssembly = Path.GetFileName (fullPath).StartsWith (AssemblyNamePrefix, StringComparison.OrdinalIgnoreCase);
 			var assemblyDir = Path.Combine (CachePath, Path.GetFileNameWithoutExtension (fullPath));
 			// upgrade the paths to not strip off the Xamarin. prefix as it might cause assembly 
@@ -144,10 +140,10 @@ namespace Xamarin.Android.Tasks {
 				Directory.Delete (oldAssemblyDir, recursive: true);
 			}
 			if (sourceUrl.Name != null) {
-				if (new Uri (sourceUrl.Argument.Value as string).IsFile)
+				if (new Uri (sourceUrl.Value as string).IsFile)
 					assemblyDir = Path.GetDirectoryName (fullPath);
-				baseDir = MakeSureLibraryIsInPlace (assemblyDir, sourceUrl.Argument.Value as string,
-					version.Argument.Value as string, embeddedArchive.Argument.Value as string, sha1sum.Argument.Value as string);
+				baseDir = MakeSureLibraryIsInPlace (assemblyDir, sourceUrl.Value as string,
+					version.Value as string, embeddedArchive.Value as string, sha1sum.Value as string);
 			}
 			if (!string.IsNullOrEmpty (baseDir) && !Path.IsPathRooted (path))
 				path = Path.Combine (baseDir, path);
@@ -157,7 +153,7 @@ namespace Xamarin.Android.Tasks {
 				return;
 			}
 			if (!DesignTimeBuild)
-				LogCodedError (errorCode, errorFmt, ErrorMessage (attr), path);
+				LogCodedError (errorCode, errorFmt, ErrorMessage (attributeValue), path);
 		}
 
 		bool ExtractArchive (string url, string file, string contentDir)
@@ -298,7 +294,7 @@ namespace Xamarin.Android.Tasks {
 			string file = Path.Combine (zipDir, !uri.IsFile ? hash + ".zip" : Path.GetFileName (uri.AbsolutePath));
 			if (string.IsNullOrEmpty (extraPath) && (!File.Exists (file) || !IsValidDownload (file, sha1) || !MonoAndroidHelper.IsValidZip (file))) {
 				if (DesignTimeBuild) {
-					LogWarning ($"DesignTimeBuild={DesignTimeBuild}. Skipping download of {url}");
+					LogDebugMessage ($"DesignTimeBuild={DesignTimeBuild}. Skipping download of {url}");
 					return null;
 				}
 
@@ -370,11 +366,18 @@ namespace Xamarin.Android.Tasks {
 
 		public override bool Execute ()
 		{
-			LogDebugMessage ("GetAdditionalResourcesFromAssemblies Task");
-			LogDebugMessage ("  AndroidSdkDirectory: {0}", AndroidSdkDirectory);
-			LogDebugMessage ("  AndroidNdkDirectory: {0}", AndroidNdkDirectory);
-			LogDebugTaskItems ("  Assemblies: ", Assemblies);
+			Yield ();
+			try {
+				DoExecute ();
+			} finally {
+				Reacquire ();
+			}
 
+			return !Log.HasLoggedErrors;
+		}
+
+		void DoExecute ()
+		{
 			if (Environment.GetEnvironmentVariable ("XA_DL_IGNORE_CERT_ERRROS") == "yesyesyes") {
 				ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
 				LogDebugMessage ("    Disabling download certificate validation callback.");
@@ -385,7 +388,11 @@ namespace Xamarin.Android.Tasks {
 			var assemblies         = new HashSet<string> ();
 
 			if (Assemblies == null)
-				return true;
+				return;
+
+			var cacheFileFullPath = CacheFile;
+			if (!Path.IsPathRooted (cacheFileFullPath))
+				cacheFileFullPath = Path.Combine (WorkingDirectory, cacheFileFullPath);
 
 			System.Threading.Tasks.Task.Run (() => {
 				// The cache location can be overriden by the (to be documented) XAMARIN_CACHEPATH
@@ -394,53 +401,50 @@ namespace Xamarin.Android.Tasks {
 				? CachePath
 				: Path.Combine (Environment.GetFolderPath (Environment.SpecialFolder.LocalApplicationData), CacheBaseDir);
 
-				using (var resolver = new DirectoryAssemblyResolver (this.CreateTaskLogger (), loadDebugSymbols: false)) {
-					foreach (var assemblyItem in Assemblies) {
-						string fullPath = Path.GetFullPath (assemblyItem.ItemSpec);
-						if (DesignTimeBuild && !File.Exists (fullPath)) {
-							LogWarning ("Failed to load '{0}'. Check the file exists or the project has been built.", fullPath);
-							continue;
-						}
-						if (assemblies.Contains (fullPath)) {
-							LogDebugMessage ("  Skip assembly: {0}, it was already processed", fullPath);
-							continue;
-						}
-						// don't try to even load mscorlib it will fail.
-						if (string.Compare (Path.GetFileNameWithoutExtension (fullPath), "mscorlib", StringComparison.OrdinalIgnoreCase) == 0)
-							continue;
-						assemblies.Add (fullPath);
-						resolver.Load (fullPath);
+				foreach (var assemblyItem in Assemblies) {
+					string fullPath = Path.GetFullPath (assemblyItem.ItemSpec);
+					if (DesignTimeBuild && !File.Exists (fullPath)) {
+						LogWarning ("Failed to load '{0}'. Check the file exists or the project has been built.", fullPath);
+						continue;
+					}
+					if (assemblies.Contains (fullPath)) {
+						LogDebugMessage ("  Skip assembly: {0}, it was already processed", fullPath);
+						continue;
+					}
+					// don't try to even load mscorlib it will fail.
+					if (string.Compare (Path.GetFileNameWithoutExtension (fullPath), "mscorlib", StringComparison.OrdinalIgnoreCase) == 0)
+						continue;
+					assemblies.Add (fullPath);
+					using (var pe = new PEReader (File.OpenRead (fullPath))) {
+						var reader = pe.GetMetadataReader ();
+						var assembly = reader.GetAssemblyDefinition ();
 						// Append source file name (without the Xamarin. prefix or extension) to the base folder
 						// This would help avoid potential collisions.
-						foreach (var ca in resolver.GetAssembly (assemblyItem.ItemSpec).CustomAttributes) {
-							switch (ca.AttributeType.FullName) {
-							case "Android.IncludeAndroidResourcesFromAttribute":
-								AddAttributeValue (androidResources, ca, "XA5206", "{0}. Android resource directory {1} doesn't exist.", true, fullPath);
-								break;
-							case "Java.Interop.JavaLibraryReferenceAttribute":
-								AddAttributeValue (javaLibraries, ca, "XA5207", "{0}. Java library file {1} doesn't exist.", false, fullPath);
-								break;
-							case "Android.NativeLibraryReferenceAttribute":
-								AddAttributeValue (nativeLibraries, ca, "XA5210", "{0}. Native library file {1} doesn't exist.", false, fullPath);
-								break;
+						foreach (var handle in assembly.GetCustomAttributes ()) {
+							var attribute = reader.GetCustomAttribute (handle);
+							var fullName = reader.GetCustomAttributeFullName (attribute);
+							switch (fullName) {
+								case "Android.IncludeAndroidResourcesFromAttribute":
+									AddAttributeValue (androidResources, attribute.GetCustomAttributeArguments (), "XA5206", "{0}. Android resource directory {1} doesn't exist.", true, fullPath, fullName);
+									break;
+								case "Java.Interop.JavaLibraryReferenceAttribute":
+									AddAttributeValue (javaLibraries, attribute.GetCustomAttributeArguments (), "XA5207", "{0}. Java library file {1} doesn't exist.", false, fullPath, fullName);
+									break;
+								case "Android.NativeLibraryReferenceAttribute":
+									AddAttributeValue (nativeLibraries, attribute.GetCustomAttributeArguments (), "XA5210", "{0}. Native library file {1} doesn't exist.", false, fullPath, fullName);
+									break;
 							}
 						}
 					}
 				}
-			}, Token).ContinueWith ((t) => {
-				if (t.Exception != null) {
-					var ex = t.Exception.GetBaseException ();
-					LogError (ex.Message + Environment.NewLine + ex.StackTrace);
-				}
-				Complete ();
-			});
+			}, Token).ContinueWith (Complete);
 
 			var result = base.Execute ();
 
 			if (!result || Log.HasLoggedErrors) {
-				if (File.Exists (CacheFile))
-					File.Delete (CacheFile);
-				return false;
+				if (File.Exists (cacheFileFullPath))
+					File.Delete (cacheFileFullPath);
+				return;
 			}
 
 			var AdditionalAndroidResourcePaths = androidResources.ToArray ();
@@ -459,13 +463,11 @@ namespace Xamarin.Android.Tasks {
 					new XElement ("AdditionalNativeLibraryReferences", 
 							AdditionalNativeLibraryReferences.Select(e => new XElement ("AdditionalNativeLibraryReference", e)))
 					));
-			document.SaveIfChanged (CacheFile);
+			document.SaveIfChanged (cacheFileFullPath);
 
 			LogDebugTaskItems ("  AdditionalAndroidResourcePaths: ", AdditionalAndroidResourcePaths);
 			LogDebugTaskItems ("  AdditionalJavaLibraryReferences: ", AdditionalJavaLibraryReferences);
 			LogDebugTaskItems ("  AdditionalNativeLibraryReferences: ", AdditionalNativeLibraryReferences);
-
-			return result && !Log.HasLoggedErrors;
 		}
 	}
 }

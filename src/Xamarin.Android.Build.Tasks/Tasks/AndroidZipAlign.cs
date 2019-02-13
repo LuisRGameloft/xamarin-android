@@ -28,12 +28,15 @@ namespace Xamarin.Android.Tasks
 		}
 
 		static readonly string strSignedUnaligned = "-Signed-Unaligned";
+
+		protected override string DefaultErrorCode => "ANDZA0000";
+
 		protected override string GenerateCommandLineCommands ()
 		{
 			string sourceFilename = Path.GetFileNameWithoutExtension (Source.ItemSpec);
 			if (sourceFilename.EndsWith (strSignedUnaligned))
 				sourceFilename = sourceFilename.Remove (sourceFilename.Length - strSignedUnaligned.Length);
-			return string.Format ("{0} \"{1}\" \"{2}{3}{4}-Signed.apk\"",
+			return string.Format ("-p {0} \"{1}\" \"{2}{3}{4}-Signed.apk\"",
 				Alignment, Source.ItemSpec, DestinationDirectory.ItemSpec, Path.DirectorySeparatorChar, sourceFilename);
 		}
 

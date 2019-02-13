@@ -45,9 +45,6 @@ namespace Xamarin.Android.Tasks
 
 		public ITaskItem[] BundleNativeLibraries { get; set; }
 
-		public ITaskItem[] Environments { get; set; }
-
-		[Required]
 		public ITaskItem[] TypeMappings { get; set; }
 
 		[Required]
@@ -75,27 +72,16 @@ namespace Xamarin.Android.Tasks
 
 		public bool PreferNativeLibrariesWithDebugSymbols { get; set; }
 
-		public string AndroidAotMode { get; set; }		
-
 		public string AndroidSequencePointsMode { get; set; }
 
-		public bool EnableLLVM { get; set; }
-
-		public bool EnableSGenConcurrent { get; set; }
-
-		public string StubApplicationDataFile { get; set; }
 		public string AndroidEmbedProfilers { get; set; }
-		public string HttpClientHandlerType { get; set; }
 		public string TlsProvider { get; set; }
-
+		public string UncompressedFileExtensions { get; set; }
 
 		static  readonly    string          MSBuildXamarinAndroidDirectory      = Path.GetDirectoryName (typeof (BuildApk).Assembly.Location);
 
 		[Output]
 		public ITaskItem[] OutputFiles { get; set; }
-
-		[Output]
-		public string BuildId { get; set; }
 
 		bool _Debug {
 			get {
@@ -104,10 +90,9 @@ namespace Xamarin.Android.Tasks
 		}
 
 		SequencePointsMode sequencePointsMode = SequencePointsMode.None;
-
-		Guid buildId = Guid.NewGuid ();
 		
 		public ITaskItem[] LibraryProjectJars { get; set; }
+		string [] uncompressedFileExtensions;
 
 		void ExecuteWithAbi (string supportedAbis, string apkInputPath, string apkOutputPath)
 		{
@@ -115,6 +100,7 @@ namespace Xamarin.Android.Tasks
 			if (apkInputPath != null)
 				File.Copy (apkInputPath, apkOutputPath + "new", overwrite: true);
 			using (var apk = new ZipArchiveEx (apkOutputPath + "new", apkInputPath != null ? FileMode.Open : FileMode.Create )) {
+				apk.FixupWindowsPathSeparators ((a, b) => Log.LogDebugMessage ($"Fixing up malformed entry `{a}` -> `{b}`"));
 				apk.Archive.AddEntry ("NOTICE",
 						Assembly.GetExecutingAssembly ().GetManifestResourceStream ("NOTICE.txt"));
 
@@ -124,18 +110,17 @@ namespace Xamarin.Android.Tasks
 				if (EmbedAssemblies && !BundleAssemblies)
 					AddAssemblies (apk);
 
-				AddEnvironment (apk);
 				AddRuntimeLibraries (apk, supportedAbis);
 				apk.Flush();
 				AddNativeLibraries (files, supportedAbis);
 				apk.Flush();
 				AddAdditionalNativeLibraries (files, supportedAbis);
 				apk.Flush();
-				AddNativeLibrariesFromAssemblies (apk, supportedAbis);
-				apk.Flush();
 
-				foreach (ITaskItem typemap in TypeMappings) {
-					apk.Archive.AddFile (typemap.ItemSpec, Path.GetFileName(typemap.ItemSpec), compressionMethod: CompressionMethod.Store);
+				if (TypeMappings != null) {
+					foreach (ITaskItem typemap in TypeMappings) {
+						apk.Archive.AddFile (typemap.ItemSpec, Path.GetFileName(typemap.ItemSpec), compressionMethod: CompressionMethod.Store);
+					}
 				}
 
 				int count = 0;
@@ -143,10 +128,10 @@ namespace Xamarin.Android.Tasks
 					var item = Path.Combine (file.Item2, Path.GetFileName (file.Item1))
 						.Replace (Path.DirectorySeparatorChar, '/');
 					if (apk.Archive.ContainsEntry (item)) {
-						Log.LogWarning (null, "XA4301", null, file.Item1, 0, 0, 0, 0, "Apk already contains the item {0}; ignoring.", item);
+						Log.LogCodedWarning ("XA4301", file.Item1, 0, "Apk already contains the item {0}; ignoring.", item);
 						continue;
 					}
-					apk.Archive.AddFile (file.Item1, item);
+					apk.Archive.AddFile (file.Item1, item, compressionMethod: GetCompressionMethod (file.Item1));
 					count++;
 					if (count == ZipArchiveEx.ZipFlushLimit) {
 						apk.Flush();
@@ -187,8 +172,7 @@ namespace Xamarin.Android.Tasks
 						count = 0;
 					}
 				}
-				if (StubApplicationDataFile != null && File.Exists (StubApplicationDataFile))
-					apk.Archive.AddFile (StubApplicationDataFile, Path.GetFileName (StubApplicationDataFile));
+
 			}
 			MonoAndroidHelper.CopyIfZipChanged (apkOutputPath + "new", apkOutputPath);
 			File.Delete (apkOutputPath + "new");
@@ -206,10 +190,9 @@ namespace Xamarin.Android.Tasks
 			Log.LogDebugMessage ("  Debug: {0}", Debug ?? "no");
 			Log.LogDebugMessage ("  PreferNativeLibrariesWithDebugSymbols: {0}", PreferNativeLibrariesWithDebugSymbols);
 			Log.LogDebugMessage ("  EmbedAssemblies: {0}", EmbedAssemblies);
-			Log.LogDebugMessage ("  AndroidAotMode: {0}", AndroidAotMode);
 			Log.LogDebugMessage ("  AndroidSequencePointsMode: {0}", AndroidSequencePointsMode);
 			Log.LogDebugMessage ("  CreatePackagePerAbi: {0}", CreatePackagePerAbi);
-			Log.LogDebugTaskItems ("  Environments:", Environments);
+			Log.LogDebugMessage ("  UncompressedFileExtensions: {0}", UncompressedFileExtensions);
 			Log.LogDebugTaskItems ("  ResolvedUserAssemblies:", ResolvedUserAssemblies);
 			Log.LogDebugTaskItems ("  ResolvedFrameworkAssemblies:", ResolvedFrameworkAssemblies);
 			Log.LogDebugTaskItems ("  NativeLibraries:", NativeLibraries);
@@ -219,8 +202,6 @@ namespace Xamarin.Android.Tasks
 			Log.LogDebugTaskItems ("  JavaLibraries:", JavaLibraries);
 			Log.LogDebugTaskItems ("  LibraryProjectJars:", LibraryProjectJars);
 			Log.LogDebugTaskItems ("  AdditionalNativeLibraryReferences:", AdditionalNativeLibraryReferences);
-			Log.LogDebugTaskItems ("  HttpClientHandlerType:", HttpClientHandlerType);
-			Log.LogDebugMessage ("  TlsProvider: {0}", TlsProvider);
 
 			Aot.TryGetSequencePointsMode (AndroidSequencePointsMode, out sequencePointsMode);
 
@@ -229,6 +210,7 @@ namespace Xamarin.Android.Tasks
 			}
 
 			var outputFiles = new List<string> ();
+			uncompressedFileExtensions = UncompressedFileExtensions?.Split (new char [] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries) ?? new string [0];
 
 			ExecuteWithAbi (SupportedAbis, ApkInputPath, ApkOutputPath);
 			outputFiles.Add (ApkOutputPath);
@@ -243,10 +225,6 @@ namespace Xamarin.Android.Tasks
 						outputFiles.Add (Path.Combine (path, String.Format ("{0}-{1}.apk", apk, abi)));
 					}
 			}
-
-			BuildId = buildId.ToString ();
-
-			Log.LogDebugMessage ("  [Output] BuildId: {0}", BuildId);
 
 			OutputFiles = outputFiles.Select (a => new TaskItem (a)).ToArray ();
 
@@ -264,7 +242,7 @@ namespace Xamarin.Android.Tasks
 			foreach (ITaskItem assembly in ResolvedUserAssemblies) {
 
 				if (MonoAndroidHelper.IsReferenceAssembly (assembly.ItemSpec)) {
-					Log.LogWarning ($"{assembly.ItemSpec} is a reference assembly!");
+					Log.LogCodedWarning ("XA0107", assembly.ItemSpec, 0, "{0} is a Reference Assembly!", assembly.ItemSpec);
 				}
 				// Add assembly
 				apk.Archive.AddFile (assembly.ItemSpec, GetTargetDirectory (assembly.ItemSpec) + "/"  + Path.GetFileName (assembly.ItemSpec), compressionMethod: CompressionMethod.Store);
@@ -299,7 +277,7 @@ namespace Xamarin.Android.Tasks
 			// Add framework assemblies
 			foreach (ITaskItem assembly in ResolvedFrameworkAssemblies) {
 				if (MonoAndroidHelper.IsReferenceAssembly (assembly.ItemSpec)) {
-					Log.LogWarning ($"{assembly.ItemSpec} is a reference assembly!");
+					Log.LogCodedWarning ("XA0107", assembly.ItemSpec, 0, "{0} is a Reference Assembly!", assembly.ItemSpec);
 				}
 				apk.Archive.AddFile (assembly.ItemSpec, "assemblies/" + Path.GetFileName (assembly.ItemSpec), compressionMethod: CompressionMethod.Store);
 				var config = Path.ChangeExtension (assembly.ItemSpec, "dll.config");
@@ -347,83 +325,6 @@ namespace Xamarin.Android.Tasks
 			return "assemblies";
 		}
 
-		void AddEnvironment (ZipArchiveEx apk)
-		{
-			var environment = new StringWriter () {
-				NewLine = "\n",
-			};
-
-			if (EnableLLVM) {
-				environment.WriteLine ("mono.llvm=true");
-			}
-
-			AotMode aotMode;
-			if (AndroidAotMode != null && Aot.GetAndroidAotMode(AndroidAotMode, out aotMode)) {
-				environment.WriteLine ("mono.aot={0}", aotMode.ToString().ToLowerInvariant());
-			}
-
-			const string defaultLogLevel = "MONO_LOG_LEVEL=info";
-			const string defaultMonoDebug = "MONO_DEBUG=gen-compact-seq-points";
-			const string defaultHttpMessageHandler = "XA_HTTP_CLIENT_HANDLER_TYPE=System.Net.Http.HttpClientHandler, System.Net.Http";
-			const string defaultTlsProvider = "XA_TLS_PROVIDER=btls";
-			string xamarinBuildId = string.Format ("XAMARIN_BUILD_ID={0}", buildId);
-
-			bool haveLogLevel = false;
-			bool haveMonoDebug = false;
-			bool havebuildId = false;
-			bool haveHttpMessageHandler = false;
-			bool haveTlsProvider = false;
-			bool haveMonoGCParams = false;
-
-			foreach (ITaskItem env in Environments ?? new TaskItem[0]) {
-				environment.WriteLine ("## Source File: {0}", env.ItemSpec);
-				foreach (string line in File.ReadLines (env.ItemSpec)) {
-					var lineToWrite = line;
-					if (lineToWrite.StartsWith ("MONO_LOG_LEVEL=", StringComparison.Ordinal))
-						haveLogLevel = true;
-					if (lineToWrite.StartsWith ("MONO_GC_PARAMS=", StringComparison.Ordinal))
-						haveMonoGCParams = true;
-					if (lineToWrite.StartsWith ("XAMARIN_BUILD_ID=", StringComparison.Ordinal))
-						havebuildId = true;
-					if (lineToWrite.StartsWith ("MONO_DEBUG=", StringComparison.Ordinal)) {
-						haveMonoDebug = true;
-						if (sequencePointsMode != SequencePointsMode.None && !lineToWrite.Contains ("gen-compact-seq-points"))
-							lineToWrite = line  + ",gen-compact-seq-points";
-					}
-					if (lineToWrite.StartsWith ("XA_HTTP_CLIENT_HANDLER_TYPE=", StringComparison.Ordinal))
-						haveHttpMessageHandler = true;
-					if (lineToWrite.StartsWith ("XA_TLS_PROVIDER=", StringComparison.Ordinal))
-						haveTlsProvider = true;
-					environment.WriteLine (lineToWrite);
-				}
-			}
-
-			if (_Debug && !haveLogLevel) {
-				environment.WriteLine (defaultLogLevel);
-			}
-
-			if (sequencePointsMode != SequencePointsMode.None && !haveMonoDebug) {
-				environment.WriteLine (defaultMonoDebug);
-			}
-
-			if (!havebuildId)
-				environment.WriteLine (xamarinBuildId);
-
-			if (!haveHttpMessageHandler)
-				environment.WriteLine (HttpClientHandlerType == null ? defaultHttpMessageHandler : $"XA_HTTP_CLIENT_HANDLER_TYPE={HttpClientHandlerType.Trim ()}");
-			if (!haveTlsProvider)
-				environment.WriteLine (TlsProvider == null ? defaultTlsProvider : $"XA_TLS_PROVIDER={TlsProvider.Trim ()}");
-			if (!haveMonoGCParams) {
-				if (EnableSGenConcurrent)
-					environment.WriteLine ("MONO_GC_PARAMS=major=marksweep-conc");
-				else
-					environment.WriteLine ("MONO_GC_PARAMS=major=marksweep");
-			}
-
-			apk.Archive.AddEntry ("environment", environment.ToString (),
-					new UTF8Encoding (encoderShouldEmitUTF8Identifier:false));
-		}
-
 		class LibInfo
 		{
 			public string Path;
@@ -433,7 +334,6 @@ namespace Xamarin.Android.Tasks
 		static readonly string[] ArmAbis = new[]{
 			"arm64-v8a",
 			"armeabi-v7a",
-			"armeabi",
 		};
 
 		public static readonly string[] ValidProfilers = new[]{
@@ -457,6 +357,13 @@ namespace Xamarin.Android.Tasks
 			return results;
 		}
 
+		CompressionMethod GetCompressionMethod (string fileName)
+		{
+			if (uncompressedFileExtensions.Any (x => string.Compare (x, Path.GetExtension (fileName), StringComparison.OrdinalIgnoreCase) == 0))
+				return CompressionMethod.Store;
+			return CompressionMethod.Default;
+		}
+
 		void AddNativeLibrary (ZipArchiveEx apk, string abi, string filename, string inArchiveFileName = null)
 		{
 			string libPath = Path.Combine (MSBuildXamarinAndroidDirectory, "lib", abi);
@@ -469,7 +376,7 @@ namespace Xamarin.Android.Tasks
 
 			string archivePath = string.Format ("lib/{0}/{1}", abi, inArchiveFileName ?? filename);
 			Log.LogDebugMessage ($"Adding native library: {path} (APK path: {archivePath})");
-			apk.Archive.AddEntry (archivePath, File.OpenRead (path));
+			apk.Archive.AddEntry (archivePath, File.OpenRead (path), compressionMethod: GetCompressionMethod (archivePath));
 		}
 
 		void AddProfilers (ZipArchiveEx apk, string abi)
@@ -509,48 +416,6 @@ namespace Xamarin.Android.Tasks
 			}
 		}
 
-		void AddNativeLibrariesFromAssemblies (ZipArchiveEx apk, string supportedAbis)
-		{
-			int count = 0;
-			var abis = supportedAbis.Split (new char[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-			using (var res = new DirectoryAssemblyResolver (this.CreateTaskLogger (), loadDebugSymbols: false)) {
-			foreach (var assembly in EmbeddedNativeLibraryAssemblies)
-				res.Load (assembly.ItemSpec);
-				foreach (var assemblyPath in EmbeddedNativeLibraryAssemblies) {
-					var assembly = res.GetAssembly (assemblyPath.ItemSpec);
-					foreach (var mod in assembly.Modules) {
-						var ressozip = mod.Resources.FirstOrDefault (r => r.Name == "__AndroidNativeLibraries__.zip") as EmbeddedResource;
-						if (ressozip == null)
-							continue;
-						var data = ressozip.GetResourceData ();
-						using (var ms = new MemoryStream (data)) {
-							using (var zip = ZipArchive.Open (ms)) {
-								foreach (var e in zip.Where (x => abis.Any (a => x.FullName.Contains ($"/{a}/")))) {
-									if (e.IsDirectory)
-										continue;
-									var key = e.FullName.Replace ("native_library_imports", "lib");
-									if (apk.Archive.Any (k => k.FullName == key)) {
-										Log.LogCodedWarning ("4301", "Apk already contains the item {0}; ignoring.", key);
-										continue;
-									}
-									using (var s = new MemoryStream ()) {
-										e.Extract (s);
-										s.Position = 0;
-										apk.Archive.AddEntry (s.ToArray (), key);
-									}
-								}
-							}
-						}
-					}
-					count++;
-					if (count == ZipArchiveEx.ZipFlushLimit) {
-						apk.Flush();
-						count = 0;
-					}
-				}
-			}
-		}
-
 		private void AddNativeLibraries (ArchiveFileList files, string supportedAbis)
 		{
 			var libs = NativeLibraries.Concat (BundleNativeLibraries ?? Enumerable.Empty<ITaskItem> ())
@@ -565,7 +430,7 @@ namespace Xamarin.Android.Tasks
 			var lib_abi = MonoAndroidHelper.GetNativeLibraryAbi (lib);
 			
 			if (string.IsNullOrWhiteSpace (lib_abi)) {
-				Log.LogError ("Cannot determine abi of native library {0}.", lib);
+				Log.LogCodedError ("XA4301", lib.ItemSpec, 0, "Cannot determine abi of native library {0}.", lib.ItemSpec);
 				return null;
 			}
 
@@ -576,7 +441,7 @@ namespace Xamarin.Android.Tasks
 		{
 			if (libs.Any (lib => lib.Abi == null))
 				Log.LogCodedWarning (
-						"4301",
+						"XA4301",
 						"Could not determine abi of some native libraries, ignoring those: " +
 				                    string.Join (", ", libs.Where (lib => lib.Abi == null).Select (lib => lib.Path)));
 			libs = libs.Where (lib => lib.Abi != null);

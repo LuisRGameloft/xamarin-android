@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
@@ -17,6 +18,8 @@ namespace Xamarin.Android.Tasks
 	// can't be a single ToolTask, because it has to run mkbundle many times for each arch.
 	public class MakeBundleNativeCodeExternal : Task
 	{
+		const string BundleSharedLibraryName = "libmonodroid_bundle_app.so";
+
 		[Required]
 		public string AndroidNdkDirectory { get; set; }
 
@@ -38,6 +41,9 @@ namespace Xamarin.Android.Tasks
 		public bool EmbedDebugSymbols { get; set; }
 		public bool KeepTemp { get; set; }
 
+		[Required]
+		public string BundleApiPath { get; set; }
+
 		[Output]
 		public ITaskItem [] OutputNativeLibraries { get; set; }
 
@@ -50,11 +56,11 @@ namespace Xamarin.Android.Tasks
 			Log.LogDebugMessage ("Assemblies: {0}", Assemblies.Length);
 			Log.LogDebugMessage ("SupportedAbis: {0}", SupportedAbis);
 			Log.LogDebugMessage ("AutoDeps: {0}", AutoDeps);
+
+			if (!NdkUtil.Init (Log, AndroidNdkDirectory))
+				return false;
+
 			try {
-				if (String.IsNullOrEmpty (AndroidNdkDirectory)) {
-					Log.LogCodedError ("XA5101", "Could not locate Android NDK. Please make sure to configure path to NDK in SDK Locations or set via /p:AndroidNdkDirectory in the MSBuild/xbuild argument.");
-					return false;
-				}
 				return DoExecute ();
 			} catch (XamarinAndroidException e) {
 				Log.LogCodedError (string.Format ("XA{0:0000}", e.Code), e.MessageWithoutCode);
@@ -83,7 +89,6 @@ namespace Xamarin.Android.Tasks
 				case "aarch64":
 					arch = AndroidTargetArch.Arm64;
 					break;
-				case "armeabi":
 				case "armeabi-v7a":
 					arch = AndroidTargetArch.Arm;
 					break;
@@ -112,6 +117,8 @@ namespace Xamarin.Android.Tasks
 				clb.AppendSwitch ("--nomain");
 				clb.AppendSwitch ("--i18n none");
 				clb.AppendSwitch ("--bundled-header");
+				clb.AppendSwitch ("--mono-api-struct-path");
+				clb.AppendFileNameIfNotNull (BundleApiPath);
 				clb.AppendSwitch ("--style");
 				clb.AppendSwitch ("linux");
 				clb.AppendSwitch ("-c");
@@ -134,12 +141,13 @@ namespace Xamarin.Android.Tasks
 					CreateNoWindow = true,
 					WindowStyle = ProcessWindowStyle.Hidden,
 				};
-				var gccNoQuotes = NdkUtil.GetNdkTool (AndroidNdkDirectory, arch, "gcc");
-				var gcc = '"' + gccNoQuotes + '"';
-				var gas = '"' + NdkUtil.GetNdkTool (AndroidNdkDirectory, arch, "as") + '"';
-				psi.EnvironmentVariables ["CC"] = gcc;
+				string windowsCompilerSwitches = NdkUtil.GetCompilerTargetParameters (AndroidNdkDirectory, arch, level);
+				var compilerNoQuotes = NdkUtil.GetNdkTool (AndroidNdkDirectory, arch, "gcc", level);
+				var compiler = $"\"{compilerNoQuotes}\" {windowsCompilerSwitches}".Trim ();
+				var gas = '"' + NdkUtil.GetNdkTool (AndroidNdkDirectory, arch, "as", level) + '"';
+				psi.EnvironmentVariables ["CC"] = compiler;
 				psi.EnvironmentVariables ["AS"] = gas;
-				Log.LogDebugMessage ("CC=" + gcc);
+				Log.LogDebugMessage ("CC=" + compiler);
 				Log.LogDebugMessage ("AS=" + gas);
 				//psi.EnvironmentVariables ["PKG_CONFIG_PATH"] = Path.Combine (Path.GetDirectoryName (MonoDroidSdk.MandroidTool), "lib", abi);
 				Log.LogDebugMessage ("[mkbundle] " + psi.FileName + " " + clb);
@@ -156,23 +164,23 @@ namespace Xamarin.Android.Tasks
 					return false;
 				}
 
-				// make some changes in the mkbundle output so that it does not require libmonodroid.so
-				var mkbundleOutput = File.ReadAllText (Path.Combine (outpath, "temp.c"));
-				mkbundleOutput = mkbundleOutput.Replace ("void mono_mkbundle_init ()", "void mono_mkbundle_init (void (register_bundled_assemblies_func)(const MonoBundledAssembly **), void (register_config_for_assembly_func)(const char *, const char *))")
-					.Replace ("mono_register_config_for_assembly (\"", "register_config_for_assembly_func (\"")
-					.Replace ("install_dll_config_files (void)", "install_dll_config_files (void (register_config_for_assembly_func)(const char *, const char *))")
-					.Replace ("install_dll_config_files ()", "install_dll_config_files (register_config_for_assembly_func)")
-					.Replace ("mono_register_bundled_assemblies(", "register_bundled_assemblies_func(");
-				File.WriteAllText (Path.Combine (outpath, "temp.c"), mkbundleOutput);
-
 				// then compile temp.c into temp.o and ...
 
 				clb = new CommandLineBuilder ();
+
+				// See NdkUtils.GetNdkTool for reasons why
+				if (!String.IsNullOrEmpty (windowsCompilerSwitches))
+					clb.AppendTextUnquoted (windowsCompilerSwitches);
+
 				clb.AppendSwitch ("-c");
 
 				// This is necessary only when unified headers are in use but it won't hurt to have it
 				// defined even if we don't use them
 				clb.AppendSwitch ($"-D__ANDROID_API__={level}");
+
+				// This is necessary because of the injected code, which is reused between libmonodroid
+				// and the bundle
+				clb.AppendSwitch ("-DANDROID");
 
 				clb.AppendSwitch ("-o");
 				clb.AppendFileNameIfNotNull (Path.Combine (outpath, "temp.o"));
@@ -190,8 +198,8 @@ namespace Xamarin.Android.Tasks
 				clb.AppendSwitch ("-I");
 				clb.AppendFileNameIfNotNull (NdkUtil.GetNdkPlatformIncludePath (AndroidNdkDirectory, arch, level));
 				clb.AppendFileNameIfNotNull (Path.Combine (outpath, "temp.c"));
-				Log.LogDebugMessage ("[CC] " + gcc + " " + clb);
-				if (MonoAndroidHelper.RunProcess (gccNoQuotes, clb.ToString (), OnCcOutputData,  OnCcErrorData) != 0) {
+				Log.LogDebugMessage ("[CC] " + compiler + " " + clb);
+				if (MonoAndroidHelper.RunProcess (compilerNoQuotes, clb.ToString (), OnCcOutputData,  OnCcErrorData) != 0) {
 					Log.LogCodedError ("XA5103", "NDK C compiler resulted in an error. Exit code {0}", proc.ExitCode);
 					return false;
 				}
@@ -202,8 +210,12 @@ namespace Xamarin.Android.Tasks
 				clb.AppendSwitch ("--shared");
 				clb.AppendFileNameIfNotNull (Path.Combine (outpath, "temp.o"));
 				clb.AppendFileNameIfNotNull (Path.Combine (outpath, "assemblies.o"));
+
+				// API23+ requires that the shared library has its soname set or it won't load
+				clb.AppendSwitch ("-soname");
+				clb.AppendSwitch (BundleSharedLibraryName);
 				clb.AppendSwitch ("-o");
-				clb.AppendFileNameIfNotNull (Path.Combine (outpath, "libmonodroid_bundle_app.so"));
+				clb.AppendFileNameIfNotNull (Path.Combine (outpath, BundleSharedLibraryName));
 				clb.AppendSwitch ("-L");
 				clb.AppendFileNameIfNotNull (NdkUtil.GetNdkPlatformLibPath (AndroidNdkDirectory, arch, level));
 				clb.AppendSwitch ("-lc");
@@ -211,7 +223,7 @@ namespace Xamarin.Android.Tasks
 				clb.AppendSwitch ("-ldl");
 				clb.AppendSwitch ("-llog");
 				clb.AppendSwitch ("-lz"); // Compress
-				string ld = NdkUtil.GetNdkTool (AndroidNdkDirectory, arch, "ld");
+				string ld = NdkUtil.GetNdkTool (AndroidNdkDirectory, arch, "ld", level);
 				Log.LogMessage (MessageImportance.Normal, "[LD] " + ld + " " + clb);
 				if (MonoAndroidHelper.RunProcess (ld, clb.ToString (), OnLdOutputData,  OnLdErrorData) != 0) {
 					Log.LogCodedError ("XA5201", "NDK Linker resulted in an error. Exit code {0}", proc.ExitCode);

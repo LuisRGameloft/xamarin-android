@@ -11,7 +11,7 @@
       <ResultsPath>$(OutputPath)TestResult-Mono.Android_Tests.xml</ResultsPath>
       <TimingDefinitionsFilename>$(MSBuildThisFileDirectory)..\..\..\build-tools\scripts\TimingDefinitions.txt</TimingDefinitionsFilename>
       <TimingResultsFilename>$(MSBuildThisFileDirectory)..\..\..\TestResult-Mono.Android_Tests-times.csv</TimingResultsFilename>
-      <ApkSizesInputFilename>apk-sizes-$(_MonoAndroidTestPackage)-$(Configuration)$(TestsAotName).txt</ApkSizesInputFilename>
+      <ApkSizesInputFilename>apk-sizes-$(_MonoAndroidTestPackage)-$(Configuration)$(TestsFlavor).txt</ApkSizesInputFilename>
       <ApkSizesDefinitionFilename>$(MSBuildThisFileDirectory)..\..\..\build-tools\scripts\ApkSizesDefinitions.txt</ApkSizesDefinitionFilename>
       <ApkSizesResultsFilename>$(MSBuildThisFileDirectory)..\..\..\TestResult-Mono.Android_Tests-values.csv</ApkSizesResultsFilename>
     </TestApk>
@@ -22,5 +22,13 @@
       <Package>Mono.Android_Tests</Package>
       <ResultsPath>$(OutputPath)TestResult-Mono.Android_Tests.xml</ResultsPath>
     </TestApkInstrumentation>
+
+    <TestApkPermission Include="READ_EXTERNAL_STORAGE">
+      <Package>Mono.Android_Tests</Package>
+    </TestApkPermission>
+
+    <TestApkPermission Include="WRITE_EXTERNAL_STORAGE">
+      <Package>Mono.Android_Tests</Package>
+    </TestApkPermission>
   </ItemGroup>
 </Project>

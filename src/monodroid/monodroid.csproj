@@ -32,9 +32,28 @@
       <Name>dependencies</Name>
       <ReferenceOutputAssembly>False</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\..\build-tools\mono-runtimes\mono-runtimes.csproj">
+    <!--
+      `jnimarshalmethod-gen.exe` needs to be built first because our
+      `_CreateJavaInteropDllConfigs` target replaces
+      `Java.Runtime.Environment.dll.config`, which will be created as
+      part of the `jnimarshalmethod-gen.exe` build.
+      
+      We don't want our updated version to be replaced by the
+      `jnimarshalmethod-gen.exe` build.
+      -->
+    <ProjectReference Include="..\..\external\Java.Interop\tools\jnimarshalmethod-gen\Xamarin.Android.Tools.JniMarshalMethodGenerator.csproj">
+      <Project>{D1295A8F-4F42-461D-A046-564476C10002}</Project>
+      <Name>jnimarshalmethod-gen</Name>
+      <ReferenceOutputAssembly>False</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\mono-runtimes\mono-runtimes.csproj">
       <Project>{C03E6CF1-7460-4CDC-A4AB-292BBC0F61F2}</Project>
       <Name>mono-runtimes</Name>
+      <ReferenceOutputAssembly>False</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\..\build-tools\linux-mingw-dependencies\linux-mingw-dependencies.csproj">
+      <Project>{2C1C68CD-CFED-4DEB-A2D3-61D6932F3E8E}</Project>
+      <Name>linux-mingw-dependencies</Name>
       <ReferenceOutputAssembly>False</ReferenceOutputAssembly>
     </ProjectReference>
   </ItemGroup>

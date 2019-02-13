@@ -51,6 +51,8 @@ namespace Xamarin.Android.Tasks
 
 		public string TlsProvider { get; set; }
 
+		public bool PreserveJniMarshalMethods { get; set; }
+
 		IEnumerable<AssemblyDefinition> GetRetainAssemblies (DirectoryAssemblyResolver res)
 		{
 			List<AssemblyDefinition> retainList = null;
@@ -67,23 +69,6 @@ namespace Xamarin.Android.Tasks
 
 		public override bool Execute ()
 		{
-			Log.LogDebugMessage ("LinkAssemblies Task");
-			Log.LogDebugMessage ("  UseSharedRuntime: {0}", UseSharedRuntime);
-			Log.LogDebugMessage ("  MainAssembly: {0}", MainAssembly);
-			Log.LogDebugMessage ("  OutputDirectory: {0}", OutputDirectory);
-			Log.LogDebugMessage ("  OptionalDestinationDirectory: {0}", OptionalDestinationDirectory);
-			Log.LogDebugMessage ("  I18nAssemblies: {0}", I18nAssemblies);
-			Log.LogDebugMessage ("  LinkMode: {0}", LinkMode);
-			Log.LogDebugMessage ("  LinkSkip: {0}", LinkSkip);
-			Log.LogDebugTaskItems ("  LinkDescriptions:", LinkDescriptions);
-			Log.LogDebugTaskItems ("  ResolvedAssemblies:", ResolvedAssemblies);
-			Log.LogDebugMessage ("  EnableProguard: {0}", EnableProguard);
-			Log.LogDebugMessage ("  ProguardConfiguration: {0}", ProguardConfiguration);
-			Log.LogDebugMessage ("  DumpDependencies: {0}", DumpDependencies);
-			Log.LogDebugMessage ("  LinkOnlyNewerThan: {0}", LinkOnlyNewerThan);
-			Log.LogDebugMessage ("  HttpClientHandlerType: {0}", HttpClientHandlerType);
-			Log.LogDebugMessage ("  TlsProvider: {0}", TlsProvider);
-
 			var rp = new ReaderParameters {
 				InMemory    = true,
 			};
@@ -115,6 +100,7 @@ namespace Xamarin.Android.Tasks
 			options.DumpDependencies = DumpDependencies;
 			options.HttpClientHandlerType = HttpClientHandlerType;
 			options.TlsProvider = TlsProvider;
+			options.PreserveJniMarshalMethods = PreserveJniMarshalMethods;
 			
 			var skiplist = new List<string> ();
 
@@ -148,6 +134,7 @@ namespace Xamarin.Android.Tasks
 				foreach (var assembly in ResolvedAssemblies) {
 					var copysrc = assembly.ItemSpec;
 					var filename = Path.GetFileName (assembly.ItemSpec);
+					var assemblyDestination = Path.Combine (copydst, filename);
 
 					if (options.LinkNone) {
 						if (skiplist.Any (s => Path.GetFileNameWithoutExtension (filename) == s)) {
@@ -155,9 +142,8 @@ namespace Xamarin.Android.Tasks
 							// We cannot just copy the linker output from *current* run output, because
 							// it always renew the assemblies, in *different* binary values, whereas
 							// the dll in the OptionalDestinationDirectory must retain old and unchanged.
-							if (File.Exists (Path.Combine (copydst, filename)))
+							if (File.Exists (assemblyDestination))
 								continue;
-							copysrc = assembly.ItemSpec;
 						} else {
 							// Prefer fixup assemblies if exists, otherwise just copy the original.
 							copysrc = Path.Combine (OutputDirectory, filename);
@@ -167,14 +153,17 @@ namespace Xamarin.Android.Tasks
 					else if (!MonoAndroidHelper.IsForceRetainedAssembly (filename))
 						continue;
 
-					MonoAndroidHelper.CopyIfChanged (copysrc, Path.Combine (copydst, filename));
-					try {
-						MonoAndroidHelper.CopyIfChanged (assembly.ItemSpec + ".mdb", Path.Combine (copydst, filename + ".mdb"));
-					} catch (Exception) { // skip it, mdb sometimes fails to read and it's optional
+					MonoAndroidHelper.CopyIfChanged (copysrc, assemblyDestination);
+					var mdb = assembly.ItemSpec + ".mdb";
+					if (File.Exists (mdb)) {
+						var mdbDestination = assemblyDestination + ".mdb";
+						MonoAndroidHelper.CopyIfChanged (mdb, mdbDestination);
 					}
 					var pdb = Path.ChangeExtension (copysrc, "pdb");
-					if (File.Exists (pdb) && Files.IsPortablePdb (pdb))
-						MonoAndroidHelper.CopyIfChanged (pdb, Path.ChangeExtension (Path.Combine (copydst, filename), "pdb"));
+					if (File.Exists (pdb) && Files.IsPortablePdb (pdb)) {
+						var pdbDestination = Path.ChangeExtension (assemblyDestination, "pdb");
+						MonoAndroidHelper.CopyIfChanged (pdb, pdbDestination);
+					}
 				}
 			} catch (ResolutionException ex) {
 				Diagnostic.Error (2006, ex, "Could not resolve reference to '{0}' (defined in assembly '{1}') with scope '{2}'. When the scope is different from the defining assembly, it usually means that the type is forwarded.", ex.Member, ex.Member.Module.Assembly, ex.Scope);

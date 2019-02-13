@@ -1,11 +1,14 @@
-﻿using System;
-using Xamarin.ProjectTools;
+﻿using Mono.Cecil;
 using NUnit.Framework;
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Collections.Generic;
+using System.Xml.Linq;
+using Xamarin.ProjectTools;
 
-namespace Xamarin.Android.Build.Tests {
+namespace Xamarin.Android.Build.Tests
+{
 	[Parallelizable (ParallelScope.Children)]
 	public class BindingBuildTest : BaseTest {
 #pragma warning disable 414
@@ -28,6 +31,17 @@ namespace Xamarin.Android.Build.Tests {
 			proj.AndroidClassParser = classParser;
 			using (var b = CreateDllBuilder (Path.Combine ("temp", TestName))) {
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
+
+				//A list of properties we check exist in binding projects
+				var properties = new [] {
+					"AndroidSdkBuildToolsVersion",
+					"AndroidSdkPlatformToolsVersion",
+					"AndroidSdkToolsVersion",
+					"AndroidNdkVersion",
+				};
+				foreach (var property in properties) {
+					Assert.IsTrue (StringAssertEx.ContainsText (b.LastBuildOutput, property + " = "), $"$({property}) should be set!");
+				}
 			}
 		}
 
@@ -80,7 +94,7 @@ namespace Xamarin.Android.Build.Tests {
 				UseLatestPlatformSdk = true,
 				IsRelease = true,
 			};
-			proj.Packages.Add (KnownPackages.AndroidSupportV4_22_1_1_1);
+			proj.PackageReferences.Add (KnownPackages.AndroidSupportV4_22_1_1_1);
 			proj.Jars.Add (new AndroidItem.LibraryProjectZip ("Jars\\android-crop-1.0.1.aar") {
 				WebContent = "https://jcenter.bintray.com/com/soundcloud/android/android-crop/1.0.1/android-crop-1.0.1.aar"
 			});
@@ -106,9 +120,9 @@ namespace Xamarin.Android.Build.Tests {
 				IsRelease = true,
 			};
 			proj.AndroidClassParser = classParser;
-			proj.Packages.Add (KnownPackages.AndroidSupportV4_22_1_1_1);
+			proj.PackageReferences.Add (KnownPackages.AndroidSupportV4_22_1_1_1);
 			proj.Jars.Add (new AndroidItem.LibraryProjectZip ("Jars\\aFileChooserBinaries.zip") {
-				WebContent = "https://www.dropbox.com/s/hl98jrvlw4d9vjy/aFileChooserBinaries.zip?dl=1"
+				WebContentFileNameFromAzure = "aFileChooserBinaries.zip"
 			});
 			proj.MetadataXml = @"
 				<metadata>
@@ -164,7 +178,7 @@ namespace Com.Ipaulpro.Afilechooser {
 				AndroidClassParser = "class-parse",
 			};
 			proj.Jars.Add (new AndroidItem.EmbeddedJar ("Jars\\svg-android.jar") {
-				WebContent = "https://www.dropbox.com/s/5ovudccigydohys/javaBindingIssue.jar?dl=1"
+				WebContentFileNameFromAzure = "javaBindingIssue.jar"
 			});
 			using (var b = CreateDllBuilder ("temp/BindByteArrayInMethodParameter")) {
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
@@ -179,7 +193,7 @@ namespace Com.Ipaulpro.Afilechooser {
 			};
 			binding.AndroidClassParser = "class-parse";
 			binding.Jars.Add (new AndroidItem.LibraryProjectZip ("Jars\\adal-1.0.7.aar") {
-				WebContent = "https://www.dropbox.com/s/bubopadhd9d1l4b/adal-1.0.7.aar?dl=1"
+				WebContentFileNameFromAzure = "adal-1.0.7.aar"
 			});
 			binding.MetadataXml = @"
 <metadata>
@@ -210,7 +224,7 @@ namespace Com.Ipaulpro.Afilechooser {
 			};
 			binding.AndroidClassParser = "class-parse";
 			binding.Jars.Add (new AndroidItem.LibraryProjectZip ("Jars\\mylibrary.aar") {
-				WebContent = "https://www.dropbox.com/s/53679881kg9rdiq/mylibrary-debug.aar?dl=1"
+				WebContentFileNameFromAzure = "mylibrary-debug.aar"
 			});
 			var bindingBuilder = CreateDllBuilder ("temp/AnnotationSupport");
 			Assert.IsTrue (bindingBuilder.Build (binding), "binding build failed");
@@ -248,7 +262,7 @@ namespace Com.Ipaulpro.Afilechooser {
 			};
 			binding.AndroidClassParser = "class-parse";
 			binding.Jars.Add (new AndroidItem.LibraryProjectZip ("Jars\\mylibrary.aar") {
-				WebContent = "https://www.dropbox.com/s/apphdrh9cjqvtye/card.io-5.3.0.aar?dl=1"
+				WebContentFileNameFromAzure = "card.io-5.3.0.aar"
 			});
 			using (var bindingBuilder = CreateDllBuilder (Path.Combine ("temp", "BindngFilterUnsupportedNativeAbiLibraries", "Binding"))) {
 				Assert.IsTrue (bindingBuilder.Build (binding), "binding build should have succeeded");
@@ -269,10 +283,10 @@ namespace Com.Ipaulpro.Afilechooser {
 			};
 			binding.AndroidClassParser = "class-parse";
 			binding.Jars.Add (new AndroidItem.LibraryProjectZip ("Jars\\mylibrary.aar") {
-				WebContent = "https://www.dropbox.com/s/astiqp8jo97x91h/mylibrary.aar?dl=1"
+				WebContentFileNameFromAzure = "mylibrary.aar"
 			});
 			binding.Jars.Add (new AndroidItem.EmbeddedJar ("Jars\\svg-android.jar") {
-				WebContent = "https://www.dropbox.com/s/5ovudccigydohys/javaBindingIssue.jar?dl=1"
+				WebContentFileNameFromAzure = "javaBindingIssue.jar"
 			});
 			var path = Path.Combine ("temp", TestContext.CurrentContext.Test.Name);
 			binding.SetProperty (binding.ActiveConfigurationProperties, "UseShortFileNames", useShortFileNames);
@@ -318,7 +332,7 @@ namespace Com.Ipaulpro.Afilechooser {
 				IsRelease = true,
 				Jars = {
 					new AndroidItem.EmbeddedJar ("Jars\\svg-android.jar") {
-						WebContent = "https://www.dropbox.com/s/5ovudccigydohys/javaBindingIssue.jar?dl=1"
+						WebContentFileNameFromAzure = "javaBindingIssue.jar"
 					}
 				},
 				AssemblyInfo = @"
@@ -381,7 +395,7 @@ namespace Foo {
 	<attr path=""/api/package[@name='com.actionbarsherlock.view']"" name=""managedName"">Xamarin.ActionbarSherlockBinding.Views</attr>
 </metadata>",
 			};
-			binding.Packages.Add (KnownPackages.AndroidSupportV4_22_1_1_1);
+			binding.PackageReferences.Add (KnownPackages.AndroidSupportV4_22_1_1_1);
 			using (var bindingBuilder = CreateDllBuilder (Path.Combine ("temp", "RemoveEventHandlerResolution", "Binding"))) {
 				Assert.IsTrue (bindingBuilder.Build (binding), "binding build should have succeeded");
 			}
@@ -444,6 +458,36 @@ AAAA==";
 				Assert.IsTrue (bindingBuilder.Build (binding), "binding build should have succeeded");
 				string xml = bindingBuilder.Output.GetIntermediaryAsText ("docs/Com.Xamarin.Android.Test.Msbuildtest/JavaSourceJarTest.xml");
 				Assert.IsTrue (xml.Contains ("<param name=\"name\"> - name to display.</param>"), "missing doc");
+			}
+		}
+
+		[Test]
+		[TestCaseSource ("ClassParseOptions")]
+		public void DesignTimeBuild (string classParser)
+		{
+			var proj = new XamarinAndroidBindingProject {
+				AndroidClassParser = classParser
+			};
+			proj.Jars.Add (new AndroidItem.LibraryProjectZip ("Jars\\material-menu-1.1.0.aar") {
+				WebContent = "https://repo.jfrog.org/artifactory/libs-release-bintray/com/balysv/material-menu/1.1.0/material-menu-1.1.0.aar"
+			});
+			using (var b = CreateDllBuilder (Path.Combine ("temp", TestName))) {
+				b.Target = "Compile";
+				Assert.IsTrue (b.Build (proj, parameters: new [] { "DesignTimeBuild=True" }), "design-time build should have succeeded.");
+
+				var intermediate = Path.Combine (Root, b.ProjectDirectory, proj.IntermediateOutputPath);
+				var api_xml = Path.Combine (intermediate, "api.xml");
+				FileAssert.Exists (api_xml);
+				var xml = XDocument.Load (api_xml);
+				var element = xml.Element ("api");
+				Assert.IsNotNull (element, "api.xml should contain an `api` element!");
+				Assert.IsTrue (element.HasElements, "api.xml should contain elements!");
+
+				var assemblyFile = Path.Combine (intermediate, proj.ProjectName + ".dll");
+				using (var assembly = AssemblyDefinition.ReadAssembly (assemblyFile)) {
+					var typeName = "Com.Balysv.Material.Drawable.Menu.MaterialMenuView";
+					Assert.IsTrue (assembly.MainModule.Types.Any (t => t.FullName == typeName), $"Type `{typeName}` should exist!");
+				}
 			}
 		}
 	}

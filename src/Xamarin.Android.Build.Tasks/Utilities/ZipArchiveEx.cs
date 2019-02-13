@@ -52,7 +52,7 @@ namespace Xamarin.Android.Tasks
 			return pathName.Replace ("\\", "/");
 		}
 
-		void AddFiles (string folder, string folderInArchive)
+		void AddFiles (string folder, string folderInArchive, CompressionMethod method)
 		{
 			int count = 0;
 			foreach (string fileName in Directory.GetFiles (folder, "*.*", SearchOption.TopDirectoryOnly)) {
@@ -64,9 +64,9 @@ namespace Xamarin.Android.Tasks
 				if (zip.ContainsEntry (archiveFileName, out index)) {
 					var e = zip.First (x => x.FullName == archiveFileName);
 					if (e.ModificationTime < fi.LastWriteTimeUtc)
-						zip.AddFile (fileName, archiveFileName);
+						zip.AddFile (fileName, archiveFileName, compressionMethod: method);
 				} else {
-					zip.AddFile (fileName, archiveFileName);
+					zip.AddFile (fileName, archiveFileName, compressionMethod: method);
 				}
 				count++;
 				if (count == ZipArchiveEx.ZipFlushLimit) {
@@ -84,21 +84,48 @@ namespace Xamarin.Android.Tasks
 				zip.DeleteEntry ((ulong)index);
 		}
 
-		public void AddDirectory (string folder, string folderInArchive)
+		public void AddDirectory (string folder, string folderInArchive, CompressionMethod method = CompressionMethod.Default)
 		{
-			AddFiles (folder, folderInArchive);
+			if (!string.IsNullOrEmpty (folder)) {
+				folder = folder.Replace ('/', Path.DirectorySeparatorChar).Replace ('\\', Path.DirectorySeparatorChar);
+				folder = Path.GetFullPath (folder);
+				if (folder [folder.Length - 1] == Path.DirectorySeparatorChar) {
+					folder = folder.Substring (0, folder.Length - 1);
+				}
+			}
+
+			AddFiles (folder, folderInArchive, method);
 			foreach (string dir in Directory.GetDirectories (folder, "*", SearchOption.AllDirectories)) {
 				var di = new DirectoryInfo (dir);
 				if ((di.Attributes & FileAttributes.Hidden) != 0)
 					continue;
-				var internalDir = dir.Replace ("./", string.Empty).Replace (folder, string.Empty);
+				var internalDir = dir.Replace (folder, string.Empty);
 				string fullDirPath = folderInArchive + internalDir;
 				try {
 					zip.CreateDirectory (fullDirPath);
 				} catch (ZipException) {
 					
 				}
-				AddFiles (dir, fullDirPath);
+				AddFiles (dir, fullDirPath, method);
+			}
+		}
+
+		/// <summary>
+		/// HACK: aapt2 is creating zip entries on Windows such as `assets\subfolder/asset2.txt`
+		/// </summary>
+		public void FixupWindowsPathSeparators (Action<string, string> onRename)
+		{
+			bool modified = false;
+			foreach (var entry in zip) {
+				if (entry.FullName.Contains ('\\')) {
+					var name = entry.FullName.Replace ('\\', '/');
+					onRename?.Invoke (entry.FullName, name);
+					entry.Rename (name);
+					modified = true;
+				}
+			}
+			if (modified) {
+				Flush ();
 			}
 		}
 

@@ -20,7 +20,6 @@
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>$(XAInstallPrefix)xbuild-frameworks\MonoAndroid\$(AndroidFrameworkVersion)\</OutputPath>
     <DefineConstants>DEBUG;JAVA_INTEROP;NET_2_0</DefineConstants>
@@ -32,7 +31,6 @@
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>$(XAInstallPrefix)xbuild-frameworks\MonoAndroid\$(AndroidFrameworkVersion)\</OutputPath>
     <DefineConstants>JAVA_INTEROP;NET_2_0</DefineConstants>
@@ -84,6 +82,8 @@
     <Compile Include="..\..\external\Java.Interop\src\Java.Interop.Tools.TypeNameMappings\Java.Interop.Tools.TypeNameMappings\JavaNativeTypeManager.cs">
       <Link>JavaNativeTypeManager.cs</Link>
     </Compile>
+    <Compile Include="Android.Runtime\DynamicMethodNameCounter.cs" />
+    <Compile Include="Android.Runtime\IJavaObjectValueMarshaler.cs" />
   </ItemGroup>
   <Import Project="..\Xamarin.Android.NamingCustomAttributes\Xamarin.Android.NamingCustomAttributes.projitems" Label="Shared" Condition="Exists('..\Xamarin.Android.NamingCustomAttributes\Xamarin.Android.NamingCustomAttributes.projitems')" />
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
@@ -334,6 +334,7 @@
     <Compile Include="Xamarin.Android.Net\AuthModuleBasic.cs" />
     <Compile Include="Xamarin.Android.Net\AuthModuleDigest.cs" />
     <Compile Include="Xamarin.Android.Net\IAndroidAuthenticationModule.cs" />
+    <Compile Include="Xamarin.Android.Net\OldAndroidSSLSocketFactory.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\build-tools\api-xml-adjuster\api-xml-adjuster.csproj">
@@ -344,6 +345,11 @@
     <ProjectReference Include="..\..\build-tools\api-merge\api-merge.csproj">
       <Project>{3FC3E78B-F7D4-42EA-BBE8-4535DF42BFF8}</Project>
       <Name>api-merge</Name>
+      <ReferenceOutputAssembly>False</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\..\build-tools\api-xml-adjuster\api-xml-adjuster.csproj">
+      <Project>{8A6CB07C-E493-4A4F-AB94-038645A27118}</Project>
+      <Name>api-xml-adjuster</Name>
       <ReferenceOutputAssembly>False</ReferenceOutputAssembly>
     </ProjectReference>
     <ProjectReference Include="..\..\build-tools\jnienv-gen\jnienv-gen.csproj">
@@ -361,7 +367,7 @@
       <Name>jcw-gen</Name>
       <ReferenceOutputAssembly>False</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\..\build-tools\mono-runtimes\mono-runtimes.csproj">
+    <ProjectReference Include="..\..\src\mono-runtimes\mono-runtimes.csproj">
       <Project>{C03E6CF1-7460-4CDC-A4AB-292BBC0F61F2}</Project>
       <Name>mono-runtimes</Name>
       <ReferenceOutputAssembly>False</ReferenceOutputAssembly>

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Collections.Generic;
 using System.Xml.Linq;
+using Xamarin.Tools.Zip;
 
 namespace Xamarin.Android.Build.Tests
 {
@@ -66,19 +67,26 @@ namespace Xamarin.Android.Build.Tests
 				//NOTE: Windows is still generating mdb files here
 				extension = IsWindows ? "dll.mdb" : "pdb";
 				Assert.IsTrue (allFilesInArchive.Any (x => Path.GetFileName (x) == $"{proj.ProjectName}.{extension}"), $"{proj.ProjectName}.{extension} should exist in {archivePath}");
-				foreach (var abi in new string [] { "armeabi-v7a", "x86" }) {
-					using (var apk = ZipHelper.OpenZip (Path.Combine (outputPath, proj.PackageName + "-" + abi + ".apk"))) {
-						var data = ZipHelper.ReadFileFromZip (apk, "environment");
-						var env = Encoding.ASCII.GetString (data);
-						var lines = env.Split (new char [] { '\n' });
-						Assert.IsTrue (lines.Any (x => x.Contains ("XAMARIN_BUILD_ID")),
-							"The environment should contain a XAMARIN_BUIL_ID");
-						var buildID = lines.First (x => x.StartsWith ("XAMARIN_BUILD_ID", StringComparison.InvariantCultureIgnoreCase));
-						buildIds.Add (abi, buildID);
-					}
-				}
-				Assert.IsFalse (buildIds.Values.Any (x => buildIds.Values.Any (v => v != x)),
-					"All the XAMARIN_BUILD_ID values should be the same");
+				string javaEnv = Path.Combine (Root, b.ProjectDirectory,
+							       proj.IntermediateOutputPath, "android", "src", "mono", "android", "app", "XamarinAndroidEnvironmentVariables.java");
+				Assert.IsTrue (File.Exists (javaEnv), $"Java environment source does not exist at {javaEnv}");
+
+				string[] lines = File.ReadAllLines (javaEnv);
+
+				Assert.IsTrue (lines.Any (x => x.Contains ("\"XAMARIN_BUILD_ID\",")),
+					       "The environment should contain a XAMARIN_BUILD_ID");
+
+				string buildID = lines.First (x => x.Contains ("\"XAMARIN_BUILD_ID\","))
+					.Trim ()
+					.Replace ("\", \"", "=")
+					.Replace ("\",", String.Empty)
+					.Replace ("\"", String.Empty);
+				buildIds.Add ("all", buildID);
+
+				string dexFile = Path.Combine (Root, b.ProjectDirectory, proj.IntermediateOutputPath, "android", "bin", "classes.dex");
+				Assert.IsTrue (File.Exists (dexFile), $"dex file does not exist at {dexFile}");
+				Assert.IsTrue (DexUtils.ContainsClass ("Lmono/android/app/XamarinAndroidEnvironmentVariables;", dexFile, b.AndroidSdkDirectory),
+					       $"dex file {dexFile} does not contain the XamarinAndroidEnvironmentVariables class");
 
 				var msymDirectory = Path.Combine (Root, b.ProjectDirectory, proj.OutputPath, proj.PackageName + ".apk.mSYM");
 				Assert.IsTrue (File.Exists (Path.Combine (msymDirectory, "manifest.xml")), "manifest.xml should exist in", msymDirectory);
@@ -99,7 +107,7 @@ namespace Xamarin.Android.Build.Tests
 		{
 			var proj = new XamarinAndroidApplicationProject () {
 				IsRelease = true,
-				Packages = {
+				PackageReferences = {
 					new Package () {
 						Id = "System.Runtime.InteropServices.WindowsRuntime",
 						Version = "4.0.1",
@@ -168,24 +176,75 @@ namespace Xamarin.Android.Build.Tests
 		}
 
 		[Test]
-		public void CheckIncludedNativeLibraries ()
+		public void CheckIncludedNativeLibraries ([Values (true, false)] bool compressNativeLibraries)
 		{
 			var proj = new XamarinAndroidApplicationProject () {
 				IsRelease = true,
 			};
-			proj.Packages.Add(KnownPackages.SQLitePCLRaw_Core);
+			proj.PackageReferences.Add(KnownPackages.SQLitePCLRaw_Core);
 			proj.SetProperty(proj.ReleaseProperties, KnownProperties.AndroidSupportedAbis, "x86");
+			proj.SetProperty (proj.ReleaseProperties, "AndroidStoreUncompressedFileExtensions", compressNativeLibraries ? "" : ".so");
 			using (var b = CreateApkBuilder (Path.Combine ("temp", TestContext.CurrentContext.Test.Name))) {
 				b.Verbosity = Microsoft.Build.Framework.LoggerVerbosity.Diagnostic;
 				b.ThrowOnBuildFailure = false;
 				Assert.IsTrue (b.Build (proj), "build failed");
 				var apk = Path.Combine (Root, b.ProjectDirectory,
 						proj.IntermediateOutputPath, "android", "bin", "UnnamedProject.UnnamedProject.apk");
+				CompressionMethod method = compressNativeLibraries ? CompressionMethod.Deflate : CompressionMethod.Store;
 				using (var zip = ZipHelper.OpenZip (apk)) {
 					var libFiles = zip.Where (x => x.FullName.StartsWith("lib/") && !x.FullName.Equals("lib/", StringComparison.InvariantCultureIgnoreCase));
 					var abiPaths = new string[] { "lib/x86/" };
-					foreach (var file in libFiles)
-						Assert.IsTrue(abiPaths.Any (x => file.FullName.Contains (x)), $"Apk contains an unnesscary lib file: {file.FullName}");
+					foreach (var file in libFiles) {
+						Assert.IsTrue (abiPaths.Any (x => file.FullName.Contains (x)), $"Apk contains an unnesscary lib file: {file.FullName}");
+						Assert.IsTrue (file.CompressionMethod == method, $"{file.FullName} should have been CompressionMethod.{method} in the apk, but was CompressionMethod.{file.CompressionMethod}");
+					}
+				}
+			}
+		}
+
+		[Test]
+		public void EmbeddedDSOs ()
+		{
+			var proj = new XamarinAndroidApplicationProject ();
+			proj.AndroidManifest = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<manifest xmlns:android=""http://schemas.android.com/apk/res/android"" android:versionCode=""1"" android:versionName=""1.0"" package=""{proj.PackageName}"">
+	<uses-sdk />
+	<application android:label=""{proj.ProjectName}"" android:extractNativeLibs=""false"">
+	</application>
+</manifest>";
+
+			using (var b = CreateApkBuilder (Path.Combine ("temp", TestName))) {
+				Assert.IsTrue (b.Build (proj), "first build should have succeeded");
+
+				var apk = Path.Combine (Root, b.ProjectDirectory,
+						proj.IntermediateOutputPath, "android", "bin", "UnnamedProject.UnnamedProject.apk");
+				AssertEmbeddedDSOs (apk);
+
+				//Delete the apk & build again
+				File.Delete (apk);
+				Assert.IsTrue (b.Build (proj), "second build should have succeeded");
+				AssertEmbeddedDSOs (apk);
+			}
+		}
+
+		void AssertEmbeddedDSOs (string apk)
+		{
+			FileAssert.Exists (apk);
+
+			using (var zip = ZipHelper.OpenZip (apk)) {
+				foreach (var entry in zip) {
+					if (entry.FullName.EndsWith (".so")) {
+						Assert.AreEqual (entry.Size, entry.CompressedSize, $"`{entry.FullName}` should be uncompressed!");
+					} else if (entry.FullName == "environment") {
+						using (var stream = new MemoryStream ()) {
+							entry.Extract (stream);
+							stream.Position = 0;
+							using (var reader = new StreamReader (stream)) {
+								string environment = reader.ReadToEnd ();
+								StringAssert.Contains ("__XA_DSO_IN_APK=1", environment, "`__XA_DSO_IN_APK=1` should be set via @(AndroidEnvironment)");
+							}
+						}
+					}
 				}
 			}
 		}
@@ -204,24 +263,51 @@ namespace Xamarin.Android.Build.Tests
 		}
 
 		[Test]
-		public void CheckSignApk ([Values(true, false)] bool useApkSigner)
+		public void CheckSignApk ([Values(true, false)] bool useApkSigner, [Values(true, false)] bool perAbiApk)
 		{
-			string ext = Environment.OSVersion.Platform != PlatformID.Unix ? ".exe" : "";
-			if (useApkSigner && !File.Exists (Path.Combine (AndroidSdkPath, "build-tools", "26.0.1", "apksigner"+ ext))) {
-				Assert.Ignore ("Skipping test. Required build-tools verison 26.0.1 is not installed.");
+			string ext = Environment.OSVersion.Platform != PlatformID.Unix ? ".bat" : "";
+			var foundApkSigner = Directory.EnumerateDirectories (Path.Combine (AndroidSdkPath, "build-tools")).Any (dir => Directory.EnumerateFiles (dir, "apksigner"+ ext).Any ());
+			if (useApkSigner && !foundApkSigner) {
+				Assert.Ignore ("Skipping test. Required build-tools verison which contains apksigner is not installed.");
 			}
 			var proj = new XamarinAndroidApplicationProject () {
 				IsRelease = true,
 			};
 			if (useApkSigner) {
 				proj.SetProperty ("AndroidUseApkSigner", "true");
-				proj.SetProperty ("AndroidSdkBuildToolsVersion", "26.0.1");
 			} else {
 				proj.RemoveProperty ("AndroidUseApkSigner");
 			}
+			proj.SetProperty (proj.ReleaseProperties, KnownProperties.AndroidCreatePackagePerAbi, perAbiApk);
+			proj.SetProperty (proj.ReleaseProperties, KnownProperties.AndroidSupportedAbis, "armeabi-v7a;x86");
 			using (var b = CreateApkBuilder (Path.Combine ("temp", TestContext.CurrentContext.Test.Name))) {
-				b.Verbosity = Microsoft.Build.Framework.LoggerVerbosity.Diagnostic;
-				Assert.IsTrue (b.Build (proj), "build failed");
+				var bin = Path.Combine (Root, b.ProjectDirectory, proj.OutputPath);
+				Assert.IsTrue (b.Build (proj), "First build failed");
+				Assert.IsTrue (StringAssertEx.ContainsText (b.LastBuildOutput, " 0 Warning(s)"),
+						"First build should not contain warnings!  Contains\n" +
+						string.Join ("\n", b.LastBuildOutput.Where (line => line.Contains ("warning"))));
+
+				//Make sure the APKs are signed
+				foreach (var apk in Directory.GetFiles (bin, "*-Signed.apk")) {
+					using (var zip = ZipHelper.OpenZip (apk)) {
+						Assert.IsTrue (zip.Any (e => e.FullName == "META-INF/MANIFEST.MF"), $"APK file `{apk}` is not signed! It is missing `META-INF/MANIFEST.MF`.");
+					}
+				}
+
+				var item = proj.AndroidResources.First (x => x.Include () == "Resources\\values\\Strings.xml");
+				item.TextContent = () => proj.StringsXml.Replace ("${PROJECT_NAME}", "Foo");
+				item.Timestamp = null;
+				Assert.IsTrue (b.Build (proj), "Second build failed");
+				Assert.IsTrue (StringAssertEx.ContainsText (b.LastBuildOutput, " 0 Warning(s)"),
+						"Second build should not contain warnings!  Contains\n" +
+						string.Join ("\n", b.LastBuildOutput.Where (line => line.Contains ("warning"))));
+
+				//Make sure the APKs are signed
+				foreach (var apk in Directory.GetFiles (bin, "*-Signed.apk")) {
+					using (var zip = ZipHelper.OpenZip (apk)) {
+						Assert.IsTrue (zip.Any (e => e.FullName == "META-INF/MANIFEST.MF"), $"APK file `{apk}` is not signed! It is missing `META-INF/MANIFEST.MF`.");
+					}
+				}
 			}
 		}
 
@@ -410,17 +496,11 @@ namespace App1
 			var path = Path.Combine ("temp", TestContext.CurrentContext.Test.Name);
 			using (var builder = CreateDllBuilder (Path.Combine (path, netStandardProject.ProjectName), cleanupOnDispose: false)) {
 				if (!Directory.Exists (builder.MicrosoftNetSdkDirectory))
-					Assert.Ignore ("Microsoft.NET.Sdk not found.");
+					Assert.Fail ($"Microsoft.NET.Sdk not found: {builder.MicrosoftNetSdkDirectory}");
 				using (var ab = CreateApkBuilder (Path.Combine (path, app.ProjectName), cleanupOnDispose: false)) {
-					builder.RequiresMSBuild = true;
-					builder.Target = "Restore";
-					Assert.IsTrue (builder.Build (netStandardProject), "XamFormsSample Nuget packages should have been restored.");
-					builder.Target = "Build";
+					builder.RequiresMSBuild =
+						ab.RequiresMSBuild = true;
 					Assert.IsTrue (builder.Build (netStandardProject), "XamFormsSample should have built.");
-					ab.RequiresMSBuild = true;
-					ab.Target = "Restore";
-					Assert.IsTrue (ab.Build (app), "App should have built.");
-					ab.Target = "SignAndroidPackage";
 					Assert.IsTrue (ab.Build (app), "App should have built.");
 					var apk = Path.Combine (Root, ab.ProjectDirectory,
 						app.IntermediateOutputPath, "android", "bin", "UnnamedProject.UnnamedProject.apk");
@@ -437,8 +517,7 @@ namespace App1
 					}
 					if (!HasDevices)
 						Assert.Ignore ("Skipping Installation. No devices available.");
-					ab.Target = "Install";
-					Assert.IsTrue (ab.Build (app), "App should have installed.");
+					Assert.IsTrue (ab.RunTarget (app, "Install"), "App should have installed.");
 				}
 			}
 		}

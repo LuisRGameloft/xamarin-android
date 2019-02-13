@@ -8,7 +8,6 @@ using Microsoft.Build.Framework;
 using System.Text;
 using Xamarin.Android.Tasks;
 using Microsoft.Build.Utilities;
-using Xamarin.ProjectTools;
 
 namespace Xamarin.Android.Build.Tests {
 	[TestFixture]
@@ -17,8 +16,8 @@ namespace Xamarin.Android.Build.Tests {
 
 		const string StringsXml = @"<?xml version=""1.0"" encoding=""utf-8""?>
 <resources>
-  <string name = ""hello"" > Hello World, Click Me!</string>
-  <string name = ""app_name"" > App1 </string >
+  <string name=""hello"">Hello World, Click Me!</string>
+  <string name=""app_name"">App1</string>
   <plurals name=""num_locations_reported"">
     <item quantity=""zero"">No location reported</item>
     <item quantity=""one""> One location reported</item>
@@ -30,7 +29,14 @@ namespace Xamarin.Android.Build.Tests {
 
 		const string StringsXml2 = @"<?xml version=""1.0"" encoding=""utf-8""?>
 <resources>
-  <string name = ""foo"" > Hello World, Click Me!</string>
+  <string name=""foo"">Hello World, Click Me!</string>
+  <string-array name=""widths_array"">
+    <item>Thin</item>
+    <item>Thinish</item>
+    <item>Medium</item>
+    <item>Thickish</item>
+    <item>Thick</item>
+  </string-array>
 </resources>
 ";
 		const string Menu = @"<menu xmlns:android=""http://schemas.android.com/apk/res/android"">
@@ -49,13 +55,38 @@ namespace Xamarin.Android.Build.Tests {
     android:valueTo=""0""
     android:valueType=""floatType"" />";
 
+		const string Dimen = @"<?xml version=""1.0"" encoding=""utf-8""?>
+<resources>
+	<dimen name=""main_text_item_size"">17dp</dimen>
+</resources>";
+
+		const string Transition = @"<?xml version=""1.0"" encoding=""utf-8""?>
+<changeBounds
+  xmlns:android=""http://schemas.android.com/apk/res/android""
+  android:duration=""5000""
+  android:interpolator=""@android:anim/overshoot_interpolator"" />
+";
+		const string Main = @"<?xml version=""1.0"" encoding=""utf-8""?>
+<LinearLayout xmlns:android=""http://schemas.android.com/apk/res/android"">
+	<TextView android:id=""@+id/seekBar"" />
+	<TextView android:id=""@+id/seekbar"" />
+</LinearLayout>
+";
+
 		[Test]
-		public void GenerateDesignerFile ()
+		public void GenerateDesignerFileWithÜmläüts ()
 		{
-			var path = Path.Combine ("temp", TestName);
+			var path = Path.Combine ("temp", TestName + " Some Space");
 			Directory.CreateDirectory (Path.Combine (Root, path, "res", "values"));
+			Directory.CreateDirectory (Path.Combine (Root, path, "res", "transition"));
+
+			Directory.CreateDirectory (Path.Combine (Root, path, "res", "raw"));
+			Directory.CreateDirectory (Path.Combine (Root, path, "res", "layout"));
 
 			File.WriteAllText (Path.Combine (Root, path, "res", "values", "strings.xml"), StringsXml);
+			File.WriteAllText (Path.Combine (Root, path, "res", "transition", "transition.xml"), Transition);
+			File.WriteAllText (Path.Combine (Root, path, "res", "raw", "foo.txt"), "Foo");
+			File.WriteAllText (Path.Combine (Root, path, "res", "layout", "main.xml"), Main);
 
 			Directory.CreateDirectory (Path.Combine (Root, path, "lp", "res", "animator"));
 			Directory.CreateDirectory (Path.Combine (Root, path, "lp", "res", "font"));
@@ -66,6 +97,7 @@ namespace Xamarin.Android.Build.Tests {
 			File.WriteAllText (Path.Combine (Root, path, "lp", "res", "animator", "slide_in_bottom.xml"), Animator);
 			File.WriteAllText (Path.Combine (Root, path, "lp", "res", "font", "arial.ttf"), "");
 			File.WriteAllText (Path.Combine (Root, path, "lp", "res", "values", "strings.xml"), StringsXml2);
+			File.WriteAllText (Path.Combine (Root, path, "lp", "res", "values", "dimen.xml"), Dimen);
 			using (var stream = typeof (XamarinAndroidCommonProject).Assembly.GetManifestResourceStream ("Xamarin.ProjectTools.Resources.Base.Icon.png")) {
 				var icon_binary_mdpi = new byte [stream.Length];
 				stream.Read (icon_binary_mdpi, 0, (int)stream.Length);

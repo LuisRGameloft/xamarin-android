@@ -14,16 +14,6 @@ namespace Xamarin.Android.Build.Tests
 #pragma warning disable 414
 		static object [] AotChecks = new object [] {
 			new object[] {
-				/* supportedAbis */   "armeabi",
-				/* enableLLVM */      false,
-				/* expectedResult */  true,
-			},
-			new object[] {
-				/* supportedAbis */   "armeabi",
-				/* enableLLVM */      true,
-				/* expectedResult */  true,
-			},
-			new object[] {
 				/* supportedAbis */   "armeabi-v7a",
 				/* enableLLVM */      false,
 				/* expectedResult */  true,
@@ -65,28 +55,6 @@ namespace Xamarin.Android.Build.Tests
 			},
 		};
 
-		static object [] ProguardChecks = new object [] {
-			new Object [] {
-				/* isRelease */ true,
-				/* enableProguard */ true,
-				/* useLatestSdk */ true,
-			},
-			new Object [] {
-				/* isRelease */ true,
-				/* enableProguard */ false,
-				/* useLatestSdk */ true,
-			},
-			new Object [] {
-				/* isRelease */ false,
-				/* enableProguard */ true,
-				/* useLatestSdk */ true,
-			},
-			new Object [] {
-				/* isRelease */ false,
-				/* enableProguard */ false,
-				/* useLatestSdk */ true,
-			},
-		};
 		static object [] TakeSimpleFlag = new object [] {
 			new Object [] { false },
 			// Disabled because Jack DOESN'T work
@@ -241,49 +209,6 @@ namespace Xamarin.Android.Build.Tests
 				/* debugType */          "",
 				/* embedMdb */           false,
 				/* expectedRuntime */    "release",
-			},
-		};
-
-		static object [] DesugarChecks = new object [] {
-			new Object [] {
-				/* isRelease */ true,
-				/* enableDesugar */ false,
-				/* enableProguard */ true,
-			},
-			new Object [] {
-				/* isRelease */ true,
-				/* enableDesugar */ false,
-				/* enableProguard */ false,
-			},
-			new Object [] {
-				/* isRelease */ true,
-				/* enableDesugar */ true,
-				/* enableProguard */ true,
-			},
-			new Object [] {
-				/* isRelease */ true,
-				/* enableDesugar */ true,
-				/* enableProguard */ false,
-			},
-			new Object [] {
-				/* isRelease */ false,
-				/* enableDesugar */ false,
-				/* enableProguard */ true,
-			},
-			new Object [] {
-				/* isRelease */ false,
-				/* enableDesugar */ false,
-				/* enableProguard */ false,
-			},
-			new Object [] {
-				/* isRelease */ false,
-				/* enableDesugar */ true,
-				/* enableProguard */ true,
-			},
-			new Object [] {
-				/* isRelease */ false,
-				/* enableDesugar */ true,
-				/* enableProguard */ false,
 			},
 		};
 #pragma warning restore 414

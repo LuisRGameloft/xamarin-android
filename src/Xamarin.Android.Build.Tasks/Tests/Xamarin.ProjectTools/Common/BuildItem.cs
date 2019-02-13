@@ -132,6 +132,14 @@ namespace Xamarin.ProjectTools
 			}
 		}
 
+		/// <summary>
+		/// NOTE: downloads a file from our https://xamjenkinsartifact.azureedge.net/ Azure Storage Account
+		/// </summary>
+		public string WebContentFileNameFromAzure {
+			get { throw new NotSupportedException (); }
+			set { WebContent = $"https://xamjenkinsartifact.azureedge.net/mono-jenkins/xamarin-android-test/{value}"; }
+		}
+
 		public string MetadataValues {
 			get { return string.Join (";", Metadata.Select (p => p.Key + '=' + p.Value)); }
 			set {

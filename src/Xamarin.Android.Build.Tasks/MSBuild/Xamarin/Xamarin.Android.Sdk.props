@@ -22,8 +22,9 @@ Copyright (C) 2011-2016 Xamarin. All rights reserved.
 	<PropertyGroup>
 		<!-- Until VS2017+ includes its own ReferenceAssemblies outside of C:\Program Files (x86)\Reference Assemblies and into 
 			 the VsInstallRoot, we must override this ourselves for our SDKs -->
-		<TargetFrameworkRootPath Condition="'$(VsInstallRoot)' != '' And '$(TargetFrameworkRootPath)' == ''">$(VsInstallRoot)\Common7\IDE\ReferenceAssemblies\Microsoft\Framework\</TargetFrameworkRootPath>
-		<TargetFrameworkRootPath Condition="'$(VsInstallRoot)' == '' And '$(TargetFrameworkRootPath)' == ''">$(ProgramFiles)\Reference Assemblies\Microsoft\Framework\</TargetFrameworkRootPath>
+		<TargetFrameworkRootPath Condition="'$(OS)' == 'Windows_NT' And '$(VsInstallRoot)' != '' And '$(TargetFrameworkRootPath)' == ''">$(VsInstallRoot)\Common7\IDE\ReferenceAssemblies\Microsoft\Framework\</TargetFrameworkRootPath>
+		<TargetFrameworkRootPath Condition="'$(OS)' == 'Windows_NT' And '$(VsInstallRoot)' == '' And '$(TargetFrameworkRootPath)' == ''">$(ProgramFiles)\Reference Assemblies\Microsoft\Framework\</TargetFrameworkRootPath>
+		<TargetFrameworkRootPath Condition="'$(OS)' != 'Windows_NT' And '$(TargetFrameworkRootPath)' == ''">$(MSBuildThisFileDirectory)..\..\xbuild-frameworks\</TargetFrameworkRootPath>
 
 		<!-- We should always override the framework path so that XA resolves to its own mscorlib.dll -->
 		<FrameworkPathOverride>$(TargetFrameworkRootPath)MonoAndroid\v1.0</FrameworkPathOverride>
@@ -42,18 +43,7 @@ Copyright (C) 2011-2016 Xamarin. All rights reserved.
 		<Delete Files="$(IntermediateOutputPath)sdks.cache" />
 	</Target>
 
-	<UsingTask Condition="'$(VsInstallRoot)' != ''" TaskName="SetVsMonoAndroidRegistryKey" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
-		<ParameterGroup>
-			<InstallationID Required="true" />
-			<VisualStudioVersion Required="true" />
-		</ParameterGroup>
-		<Task>
-			<Code Type="Fragment" Language="cs">
-				Environment.SetEnvironmentVariable("XAMARIN_ANDROID_REGKEY", string.Format(@"SOFTWARE\Xamarin\VisualStudio\{0}_{1}\Android", VisualStudioVersion, InstallationID), EnvironmentVariableTarget.Process);
-				Log.LogMessage(Environment.GetEnvironmentVariable("XAMARIN_ANDROID_REGKEY"));
-			</Code>
-		</Task>
-	</UsingTask>
+	<UsingTask TaskName="Xamarin.Android.Tasks.SetVsMonoAndroidRegistryKey" AssemblyFile="Android\Xamarin.Android.Build.Tasks.dll" />
 
 	<PropertyGroup>
 		<XamarinAndroidSdkPropsImported>true</XamarinAndroidSdkPropsImported>

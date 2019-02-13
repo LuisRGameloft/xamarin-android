@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <UsingTask AssemblyFile="..\..\..\bin\Build$(Configuration)\xa-prep-tasks.dll" TaskName="Xamarin.Android.BuildTools.PrepTasks.ReplaceFileContents" />
   <Target Name="BuildNativeLibs"
       DependsOnTargets="AndroidPrepareForBuild"
       Inputs="jni\simple-lib.c;jni\Android.mk"
@@ -11,7 +12,7 @@
     <Exec Command="&quot;$(NdkBuildPath)&quot;" />
     <MakeDir Directories="$(OutputPath)\native-lib-1" />
     <Exec
-        Command="&quot;$(JarPath)&quot; cf ../$(OutputPath)/native-lib-1/NativeLib.zip arm64-v8a armeabi armeabi-v7a x86 x86_64"
+        Command="&quot;$(JarPath)&quot; cf ../$(OutputPath)/native-lib-1/NativeLib.zip arm64-v8a armeabi-v7a x86 x86_64"
         WorkingDirectory="libs"
     />
   </Target>
@@ -30,7 +31,7 @@
     <MakeDir Directories="$(OutputPath)\native-lib-2" />
     <MakeDir Directories="$(OutputPath)\native-lib-2\aar-test" />
     <Exec
-        Command="&quot;$(JarPath)&quot; cf ../../$(OutputPath)/native-lib-2/aar-test/EmbeddedNativeLib.zip arm64-v8a armeabi armeabi-v7a x86 x86_64"
+        Command="&quot;$(JarPath)&quot; cf ../../$(OutputPath)/native-lib-2/aar-test/EmbeddedNativeLib.zip arm64-v8a armeabi-v7a x86 x86_64"
         WorkingDirectory="simple2/libs"
     />
     <Exec
@@ -40,18 +41,18 @@
   </Target>
   <Target Name="BuildJavaLibs"
       DependsOnTargets="AndroidPrepareForBuild"
-      Inputs="java\JavaLib\project.properties"
+      Inputs="java\JavaLib\project.properties;java\JavaLib\library\build.gradle"
       Outputs="$(OutputPath)JavaLib.zip">
     <PropertyGroup>
       <_Jdk9Modules Condition="$(_JdkVersion.StartsWith ('9'))">JAVA_OPTS="--add-modules java.xml.bind"</_Jdk9Modules>
     </PropertyGroup>
     <Exec
-        EnvironmentVariables="ANDROID_HOME=$(AndroidSdkDirectory);JAVA_HOME=$(JavaSdkDirectory)"
-        Command="$(_Jdk9Modules) .\gradlew assembleDebug --stacktrace --no-daemon"
+        EnvironmentVariables="ANDROID_HOME=$(AndroidSdkDirectory);ANDROID_NDK_HOME=$(AndroidNdkDirectory);JAVA_HOME=$(JavaSdkDirectory);APP_HOME=$(GradleHome)"
+        Command="$(_Jdk9Modules) &quot;$(GradleWPath)&quot; assembleDebug $(GradleArgs)"
         WorkingDirectory="$(MSBuildThisFileDirectory)java\JavaLib"
     />
     <MakeDir Directories="$(OutputPath)" />
-    <Copy SourceFiles="java\JavaLib\library\build\outputs\aar\library-debug.aar" DestinationFiles="$(OutputPath)JavaLib.zip" />
+    <Copy SourceFiles="java\JavaLib\library\build\outputs\aar\library.aar" DestinationFiles="$(OutputPath)JavaLib.zip" />
   </Target>
   <Target Name="CleanLocal">
     <RemoveDir Directories="java\JavaLib\bin;java\JavaLib\gen;bin;obj;libs;simple2\libs" />

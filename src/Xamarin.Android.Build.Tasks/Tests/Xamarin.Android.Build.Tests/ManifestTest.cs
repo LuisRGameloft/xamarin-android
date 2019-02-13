@@ -7,6 +7,7 @@ using System.Xml;
 using System.Xml.Linq;
 using System.Xml.XPath;
 using Xamarin.Tools.Zip;
+using System.Collections.Generic;
 
 namespace Xamarin.Android.Build.Tests
 {
@@ -26,8 +27,8 @@ namespace Xamarin.Android.Build.Tests
 	<application android:label=""CheckElementReOrdering"">
 	</application>
 	<permission android:name=""com.xamarin.test.TEST"" android:label=""Test Permission"" />
-	<permissionTree android:name=""com.xamarin.test"" />
-	<permissionGroup android:name=""group1"" />
+	<permission-tree android:name=""com.xamarin.test"" />
+	<permission-group android:name=""group1"" />
 	<uses-feature android:name=""android.hardware.camera"" />
 	<supports-gl-texture android:name=""GL_OES_compressed_ETC1_RGB8_texture"" />
 	<uses-permission android:name=""android.permission.CAMERA"" />
@@ -64,13 +65,14 @@ namespace Bug12935
 ";
 
 		[Test]
-		public void Bug12935 ()
+		public void Bug12935 ([Values (true, false)] bool useAapt2)
 		{
 			var proj = new XamarinAndroidApplicationProject () {
 				IsRelease = true,
 			};
 			proj.MainActivity = ScreenOrientationActivity;
-			var directory = "temp/Bug12935";
+			proj.SetProperty ("AndroidUseAapt2", useAapt2.ToString ());
+			var directory = $"temp/Bug12935_{useAapt2}";
 			using (var builder = CreateApkBuilder (directory)) {
 
 				proj.TargetFrameworkVersion = "v4.2";
@@ -120,13 +122,14 @@ namespace Bug12935
 		}
 
 		[Test]
-		public void CheckElementReOrdering ()
+		public void CheckElementReOrdering ([Values (true, false)] bool useAapt2)
 		{
 			var proj = new XamarinAndroidApplicationProject () {
 				IsRelease = true,
 			};
 			proj.MainActivity = ScreenOrientationActivity;
-			var directory = "temp/CheckElementReOrdering";
+			proj.SetProperty ("AndroidUseAapt2", useAapt2.ToString ());
+			var directory = $"temp/CheckElementReOrdering_{useAapt2}";
 			using (var builder = CreateApkBuilder (directory)) {
 				proj.AndroidManifest = ElementOrderManifest;
 				Assert.IsTrue (builder.Build (proj), "Build should have succeeded");
@@ -263,6 +266,8 @@ namespace Bug12935
 				Assert.IsNotNull (le, "no activity element found");
 				Assert.IsTrue (doc.XPathSelectElements ("//activity[@android:directBootAware='true']", nsResolver).Any (),
 						   "'activity' element is not generated as expected.");
+				Assert.IsTrue (doc.XPathSelectElements ("//provider[@android:name='mono.MonoRuntimeProvider' and @android:directBootAware='true']", nsResolver).Any (),
+						   "'provider' element is not generated as expected.");
 			}
 		}
 
@@ -355,7 +360,7 @@ namespace Bug12935
 				/* pattern */ "{abi}{minSDK:00}{versionCode:000}",
 				/* props */ null,
 				/* shouldBuild */ true,
-				/* expected */ "211012;311012",
+				/* expected */ "216012;316012",
 			},
 			new object[] {
 				/* seperateApk */ true,
@@ -365,7 +370,7 @@ namespace Bug12935
 				/* pattern */ "{abi}{minSDK:00}{screen}{versionCode:000}",
 				/* props */ "screen=24",
 				/* shouldBuild */ true,
-				/* expected */ "21124012;31124012",
+				/* expected */ "21624012;31624012",
 			},
 			new object[] {
 				/* seperateApk */ true,
@@ -375,7 +380,7 @@ namespace Bug12935
 				/* pattern */ "{abi}{minSDK:00}{screen}{foo:0}{versionCode:000}",
 				/* props */ "screen=24;foo=$(Foo)",
 				/* shouldBuild */ true,
-				/* expected */ "211241012;311241012",
+				/* expected */ "216241012;316241012",
 			},
 			new object[] {
 				/* seperateApk */ true,
@@ -385,7 +390,7 @@ namespace Bug12935
 				/* pattern */ "{abi}{minSDK:00}{screen}{foo:00}{versionCode:000}",
 				/* props */ "screen=24;foo=$(Foo)",
 				/* shouldBuild */ false,
-				/* expected */ "2112401012;3112401012",
+				/* expected */ "2162401012;3162401012",
 			},
 		};
 
@@ -497,8 +502,8 @@ namespace Bug12935
 				using (var zip = ZipArchive.Create (ms)) {
 					zip.AddEntry ("AndroidManifest.xml", @"<?xml version='1.0'?>
 <manifest xmlns:android='http://schemas.android.com/apk/res/android' package='com.xamarin.test'>
-    <uses-sdk android:minSdkVersion='14'/>
-
+    <uses-sdk android:minSdkVersion='16'/>
+    <permission android:name='${applicationId}.permission.C2D_MESSAGE' android:protectionLevel='signature' />
     <application>
         <activity android:name='.signin.internal.SignInHubActivity' />
         <provider
@@ -531,7 +536,7 @@ namespace Bug12935
 				References = {
 					new BuildItem.ProjectReference ("..\\Binding1\\Binding1.csproj", lib.ProjectGuid)
 				},
-				Packages = {
+				PackageReferences = {
 					KnownPackages.SupportMediaCompat_25_4_0_1,
 					KnownPackages.SupportFragment_25_4_0_1,
 					KnownPackages.SupportCoreUtils_25_4_0_1,
@@ -586,6 +591,8 @@ public class TestActivity2 : FragmentActivity {
 				using (var builder = CreateApkBuilder (Path.Combine (path, "App1"))) {
 					Assert.IsTrue (builder.Build (proj), "Build should have succeeded.");
 					var manifest = builder.Output.GetIntermediaryAsText (Root, "android/AndroidManifest.xml");
+					Assert.IsTrue (manifest.Contains ("com.xamarin.manifest.permission.C2D_MESSAGE"),
+						"${applicationId}.permission.C2D_MESSAGE was not replaced with com.xamarin.manifest.permission.C2D_MESSAGE");
 					Assert.IsTrue (manifest.Contains ("com.xamarin.test.signin.internal.SignInHubActivity"),
 						".signin.internal.SignInHubActivity was not replaced with com.xamarin.test.signin.internal.SignInHubActivity");
 					Assert.IsTrue (manifest.Contains ("com.xamarin.manifest.FacebookInitProvider"),
@@ -604,6 +611,86 @@ public class TestActivity2 : FragmentActivity {
 					Assert.IsNotNull (e.Element ("intent-filter"), "TestActivity2 should have an intent-filter");
 					Assert.IsNotNull (e.Element ("intent-filter").Element ("action"), "TestActivity2 should have an intent-filter/action");
 				}
+			}
+		}
+
+		[Test]
+		public void AllActivityAttributeProperties ()
+		{
+			const string expectedOutput = "android:allowEmbedded=\"true\" android:allowTaskReparenting=\"true\" android:alwaysRetainTaskState=\"true\" android:autoRemoveFromRecents=\"true\" android:banner=\"@drawable/icon\" android:clearTaskOnLaunch=\"true\" android:colorMode=\"hdr\" android:configChanges=\"mcc\" android:description=\"@string/app_name\" android:directBootAware=\"true\" android:documentLaunchMode=\"never\" android:enabled=\"true\" android:enableVrMode=\"foo\" android:excludeFromRecents=\"true\" android:exported=\"true\" android:finishOnCloseSystemDialogs=\"true\" android:finishOnTaskLaunch=\"true\" android:hardwareAccelerated=\"true\" android:icon=\"@drawable/icon\" android:immersive=\"true\" android:label=\"TestActivity\" android:launchMode=\"singleTop\" android:lockTaskMode=\"normal\" android:logo=\"@drawable/icon\" android:maxAspectRatio=\"1.2\" android:maxRecents=\"1\" android:multiprocess=\"true\" android:name=\"com.contoso.TestActivity\" android:noHistory=\"true\" android:parentActivityName=\"md52d9cf6333b8e95e8683a477bc589eda5.MainActivity\" android:permission=\"com.contoso.permission.TEST_ACTIVITY\" android:persistableMode=\"persistNever\" android:process=\"com.contoso.process.testactivity_process\" android:recreateOnConfigChanges=\"mcc\" android:relinquishTaskIdentity=\"true\" android:resizeableActivity=\"true\" android:resumeWhilePausing=\"true\" android:rotationAnimation=\"crossfade\" android:roundIcon=\"@drawable/icon\" android:screenOrientation=\"portrait\" android:showForAllUsers=\"true\" android:showOnLockScreen=\"true\" android:showWhenLocked=\"true\" android:singleUser=\"true\" android:stateNotNeeded=\"true\" android:supportsPictureInPicture=\"true\" android:taskAffinity=\"com.contoso\" android:theme=\"@android:style/Theme.Light\" android:turnScreenOn=\"true\" android:uiOptions=\"splitActionBarWhenNarrow\" android:visibleToInstantApps=\"true\" android:windowSoftInputMode=\"stateUnchanged|adjustUnspecified\"";
+
+			var proj = new XamarinAndroidApplicationProject ();
+
+			proj.Sources.Add (new BuildItem.Source ("TestActivity.cs") {
+				TextContent = () => @"using Android.App;
+using Android.Content.PM;
+using Android.Views;
+[Activity (
+	AllowEmbedded              = true,
+	AllowTaskReparenting       = true,
+	AlwaysRetainTaskState      = true,
+	AutoRemoveFromRecents      = true,
+	Banner                     = ""@drawable/icon"",
+	ClearTaskOnLaunch          = true,
+	ColorMode                  = ""hdr"",
+	ConfigurationChanges       = ConfigChanges.Mcc,
+	Description                = ""@string/app_name"",
+	DirectBootAware            = true,
+	DocumentLaunchMode         = DocumentLaunchMode.Never,
+	Enabled                    = true,
+	EnableVrMode               = ""foo"",
+	ExcludeFromRecents         = true,
+	Exported                   = true,
+	FinishOnCloseSystemDialogs = true,
+	FinishOnTaskLaunch         = true,
+	HardwareAccelerated        = true,
+	Icon                       = ""@drawable/icon"",
+	Immersive                  = true,
+	Label                      = ""TestActivity"",
+	LaunchMode                 = LaunchMode.SingleTop,
+	LockTaskMode               = ""normal"",
+	Logo                       = ""@drawable/icon"",
+	MaxAspectRatio             = 1.2F,
+	MaxRecents                 = 1,
+	MultiProcess               = true,
+	Name                       = ""com.contoso.TestActivity"",
+	NoHistory                  = true,
+	ParentActivity             = typeof (UnnamedProject.MainActivity),
+	Permission                 = ""com.contoso.permission.TEST_ACTIVITY"",
+	PersistableMode            = ActivityPersistableMode.Never,
+	Process                    = ""com.contoso.process.testactivity_process"",
+	RecreateOnConfigChanges    = ConfigChanges.Mcc,
+	RelinquishTaskIdentity     = true,
+	ResizeableActivity         = true,
+	ResumeWhilePausing         = true,
+	RotationAnimation          = WindowRotationAnimation.Crossfade,
+	RoundIcon                  = ""@drawable/icon"",
+	ScreenOrientation          = ScreenOrientation.Portrait,
+	ShowForAllUsers            = true,
+	ShowOnLockScreen           = true,
+	ShowWhenLocked             = true,
+	SingleUser                 = true,
+	StateNotNeeded             = true,
+	SupportsPictureInPicture   = true,
+	TaskAffinity               = ""com.contoso"",
+	Theme                      = ""@android:style/Theme.Light"",
+	TurnScreenOn               = true,
+	UiOptions                  = UiOptions.SplitActionBarWhenNarrow,
+	VisibleToInstantApps       = true,
+	WindowSoftInputMode        = Android.Views.SoftInput.StateUnchanged)]
+class TestActivity : Activity { }"
+			});
+
+			using (ProjectBuilder builder = CreateDllBuilder (Path.Combine ("temp", TestName))) {
+				Assert.IsTrue (builder.Build (proj), "Build should have succeeded");
+
+				string manifest = builder.Output.GetIntermediaryAsText (Path.Combine ("android", "AndroidManifest.xml"));
+				var doc = XDocument.Parse (manifest);
+				var ns = XNamespace.Get ("http://schemas.android.com/apk/res/android");
+				IEnumerable<XElement> activities = doc.Element ("manifest")?.Element ("application")?.Elements ("activity");
+				XElement e = activities.FirstOrDefault (x => x.Attribute (ns.GetName ("label"))?.Value == "TestActivity");
+				Assert.IsNotNull (e, "Manifest should contain an activity labeled TestActivity");
+				Assert.AreEqual (expectedOutput, string.Join (" ", e.Attributes ()));
 			}
 		}
 	}

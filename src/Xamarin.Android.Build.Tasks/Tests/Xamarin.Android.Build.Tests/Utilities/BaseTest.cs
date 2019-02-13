@@ -1,30 +1,71 @@
-﻿using System;
-using System.IO;
+﻿using NUnit.Framework;
+using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Security.Cryptography;
-using Xamarin.ProjectTools;
-using NUnit.Framework;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
-using System.Threading;
+using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using Xamarin.ProjectTools;
+using XABuildPaths = Xamarin.Android.Build.Paths;
 
 namespace Xamarin.Android.Build.Tests
 {
 	public class BaseTest
 	{
-		static BaseTest ()
+		[SetUpFixture]
+		public class SetUp
 		{
-			try {
-				var adbTarget = Environment.GetEnvironmentVariable ("ADB_TARGET");
-				int sdkVersion = -1;
-				HasDevices = int.TryParse (RunAdbCommand ($"{adbTarget} shell getprop ro.build.version.sdk").Trim(), out sdkVersion) && sdkVersion != -1;
-			} catch (Exception ex) {
-				Console.Error.WriteLine ("Failed to determine whether there is Android target emulator or not" + ex);
+			public static bool HasDevices {
+				get;
+				private set;
+			}
+
+			[OneTimeSetUp]
+			public void BeforeAllTests ()
+			{
+				try {
+					var adbTarget = Environment.GetEnvironmentVariable ("ADB_TARGET");
+					int sdkVersion = -1;
+					var result = RunAdbCommand ($"{adbTarget} shell getprop ro.build.version.sdk");
+					if (result.Contains ("*")) {
+						//NOTE: We may get a result of:
+						//
+						//27* daemon not running; starting now at tcp:5037
+						//* daemon started successfully
+						result = result.Split ('*').First ().Trim ();
+					}
+					HasDevices = int.TryParse (result, out sdkVersion) && sdkVersion != -1;
+				} catch (Exception ex) {
+					Console.Error.WriteLine ("Failed to determine whether there is Android target emulator or not: " + ex);
+				}
+			}
+
+			[OneTimeTearDown]
+			public void AfterAllTests ()
+			{
+				if (System.Diagnostics.Debugger.IsAttached)
+					return;
+
+				//NOTE: adb.exe can cause a couple issues on Windows
+				//	1) it holds a lock on ~/android-toolchain, so a future build that needs to delete/recreate would fail
+				//	2) the MSBuild <Exec /> task *can* hang until adb.exe exits
+
+				try {
+					RunAdbCommand ("kill-server", true);
+				} catch (Exception ex) {
+					Console.Error.WriteLine ("Failed to run adb kill-server: " + ex);
+				}
+
+				//NOTE: in case `adb kill-server` fails, kill the process as a last resort
+				foreach (var p in Process.GetProcessesByName ("adb.exe"))
+					p.Kill ();
 			}
 		}
 
-		public static readonly bool HasDevices;
+		protected bool HasDevices => SetUp.HasDevices;
 
 		protected bool IsWindows {
 			get { return Environment.OSVersion.Platform == PlatformID.Win32NT; }
@@ -50,7 +91,7 @@ namespace Xamarin.Android.Build.Tests
 
 		public string Root {
 			get {
-				return Path.GetDirectoryName (new Uri (typeof (XamarinProject).Assembly.CodeBase).LocalPath);
+				return Path.GetFullPath (XABuildPaths.TestOutputDirectory);
 			}
 		}
 
@@ -68,10 +109,20 @@ namespace Xamarin.Android.Build.Tests
 
 		public static string AndroidSdkPath {
 			get {
-				var home = Environment.GetFolderPath (Environment.SpecialFolder.Personal);
+				var home = Environment.GetFolderPath (Environment.SpecialFolder.UserProfile);
 				var sdkPath = Environment.GetEnvironmentVariable ("ANDROID_SDK_PATH");
 				if (string.IsNullOrEmpty (sdkPath))
 					sdkPath = Path.Combine (home, "android-toolchain", "sdk");
+				return sdkPath;
+			}
+		}
+
+		public static string AndroidNdkPath {
+			get {
+				var home = Environment.GetFolderPath (Environment.SpecialFolder.UserProfile);
+				var sdkPath = Environment.GetEnvironmentVariable ("ANDROID_NDK_PATH");
+				if (string.IsNullOrEmpty (sdkPath))
+					sdkPath = Path.Combine (home, "android-toolchain", "ndk");
 				return sdkPath;
 			}
 		}
@@ -105,7 +156,31 @@ namespace Xamarin.Android.Build.Tests
 			return result;
 		}
 
-		protected string CreateFauxAndroidSdkDirectory (string path, string buildToolsVersion, int minApiLevel = 10, int maxApiLevel = 26, string alphaApiLevel = "")
+		protected string CreateFauxAndroidNdkDirectory (string path)
+		{
+			var androidNdkDirectory = Path.Combine (Root, path);
+			Directory.CreateDirectory (androidNdkDirectory);
+			Directory.CreateDirectory (Path.Combine (androidNdkDirectory, "toolchains"));
+			var sb  = new StringBuilder ();
+			if (IsWindows) {
+				sb.AppendLine ("@echo off");
+				sb.AppendLine ($"echo GNU Make 3.81");
+			} else {
+				sb.AppendLine ("#!/bin/bash");
+				sb.AppendLine ($"echo \"GNU Make 3.81\"");
+			}
+			CreateFauxExecutable (Path.Combine (androidNdkDirectory, IsWindows ? "ndk-build.cmd" : "ndk-build"), sb);
+			sb.Clear();
+			if (IsWindows) {
+				sb.AppendLine("@echo off");
+			} else {
+				sb.AppendLine("#!/bin/bash");
+			}
+			CreateFauxExecutable (Path.Combine (androidNdkDirectory, IsWindows ? "ndk-stack.cmd" : "ndk-stack"), sb);
+			return androidNdkDirectory;
+		}
+
+		protected string CreateFauxAndroidSdkDirectory (string path, string buildToolsVersion, ApiInfo [] apiLevels = null)
 		{
 			var androidSdkDirectory = Path.Combine (Root, path);
 			var androidSdkToolsPath = Path.Combine (androidSdkDirectory, "tools");
@@ -125,14 +200,15 @@ namespace Xamarin.Android.Build.Tests
 			File.WriteAllText (Path.Combine (androidSdkBuildToolsPath, IsWindows ? "aapt.exe" : "aapt"), "");
 			File.WriteAllText (Path.Combine (androidSdkToolsPath, IsWindows ? "lint.bat" : "lint"), "");
 
-			for (int i=minApiLevel; i < maxApiLevel; i++) {
-				var dir = Path.Combine (androidSdkPlatformsPath, $"android-{i}");
-				Directory.CreateDirectory(dir);
-				File.WriteAllText (Path.Combine (dir, "android.jar"), "");
+			List<ApiInfo> defaults = new List<ApiInfo> ();
+			for (int i = 10; i < 26; i++) {
+				defaults.Add (new ApiInfo () {
+					Id = i.ToString (),
+				});
 			}
-			if (!string.IsNullOrEmpty (alphaApiLevel)) {
-				var dir = Path.Combine (androidSdkPlatformsPath, $"android-{alphaApiLevel}");
-				Directory.CreateDirectory (dir);
+			foreach (var level in apiLevels ?? defaults.ToArray ()) {
+				var dir = Path.Combine (androidSdkPlatformsPath, $"android-{level.Id}");
+				Directory.CreateDirectory(dir);
 				File.WriteAllText (Path.Combine (dir, "android.jar"), "");
 			}
 			return androidSdkDirectory;
@@ -166,32 +242,57 @@ namespace Xamarin.Android.Build.Tests
 			return referencesDirectory;
 		}
 
-		protected string CreateFauxJavaSdkDirectory (string path, string javaVersion, out string javaExe)
+		protected string CreateFauxJavaSdkDirectory (string path, string javaVersion, out string javaExe, out string javacExe)
 		{
 			javaExe = IsWindows ? "Java.cmd" : "java.bash";
+			javacExe  = IsWindows ? "Javac.cmd" : "javac.bash";
 			var jarSigner = IsWindows ? "jarsigner.exe" : "jarsigner";
 			var javaPath = Path.Combine (Root, path);
 			var javaBinPath = Path.Combine (javaPath, "bin");
 			Directory.CreateDirectory (javaBinPath);
-			var sb = new StringBuilder ();
+
+			CreateFauxJavaExe (Path.Combine (javaBinPath, javaExe), javaVersion);
+			CreateFauxJavacExe (Path.Combine (javaBinPath, javacExe), javaVersion);
+
+			File.WriteAllText (Path.Combine (javaBinPath, jarSigner), "");
+			return javaPath;
+		}
+
+		void CreateFauxJavaExe (string javaExeFullPath, string version)
+		{
+			var sb  = new StringBuilder ();
 			if (IsWindows) {
 				sb.AppendLine ("@echo off");
-				sb.AppendLine ($"echo java version \"{javaVersion}\"");
-				sb.AppendLine ($"echo Java(TM) SE Runtime Environment (build {javaVersion}-b13)");
+				sb.AppendLine ($"echo java version \"{version}\"");
+				sb.AppendLine ($"echo Java(TM) SE Runtime Environment (build {version}-b13)");
 				sb.AppendLine ($"echo Java HotSpot(TM) 64-Bit Server VM (build 25.101-b13, mixed mode)");
 			} else {
 				sb.AppendLine ("#!/bin/bash");
-				sb.AppendLine ($"echo \"java version \\\"{javaVersion}\\\"\"");
-				sb.AppendLine ($"echo \"Java(TM) SE Runtime Environment (build {javaVersion}-b13)\"");
+				sb.AppendLine ($"echo \"java version \\\"{version}\\\"\"");
+				sb.AppendLine ($"echo \"Java(TM) SE Runtime Environment (build {version}-b13)\"");
 				sb.AppendLine ($"echo \"Java HotSpot(TM) 64-Bit Server VM (build 25.101-b13, mixed mode)\"");
 			}
-			
-			File.WriteAllText (Path.Combine (javaBinPath, javaExe), sb.ToString ());
-			if (!IsWindows) {
-				RunProcess ("chmod", $"u+x {Path.Combine (javaBinPath, javaExe)}");
+			CreateFauxExecutable (javaExeFullPath, sb);
+		}
+
+		void CreateFauxJavacExe (string javacExeFullPath, string version)
+		{
+			var sb  = new StringBuilder ();
+			if (IsWindows) {
+				sb.AppendLine ("@echo off");
+				sb.AppendLine ($"echo javac {version}");
+			} else {
+				sb.AppendLine ("#!/bin/bash");
+				sb.AppendLine ($"echo \"javac {version}\"");
 			}
-			File.WriteAllText (Path.Combine (javaBinPath, jarSigner), "");
-			return javaPath;
+			CreateFauxExecutable (javacExeFullPath, sb);
+		}
+
+		void CreateFauxExecutable (string exeFullPath, StringBuilder sb) {
+			File.WriteAllText (exeFullPath, sb.ToString ());
+			if (!IsWindows) {
+				RunProcess ("chmod", $"u+x {exeFullPath}");
+			}
 		}
 
 		protected ProjectBuilder CreateApkBuilder (string directory, bool cleanupAfterSuccessfulBuild = false, bool cleanupOnDispose = true)
@@ -268,12 +369,14 @@ namespace Xamarin.Android.Build.Tests
 		public void TestSetup ()
 		{
 			TestContext.Out.WriteLine ($"[TESTLOG] Test {TestName} Starting");
+			TestContext.Out.Flush ();
 		}
 
 		[TearDown]
 		protected virtual void CleanupTest ()
 		{
 			TestContext.Out.WriteLine ($"[TESTLOG] Test {TestName} Complete");
+			TestContext.Out.Flush ();
 			if (System.Diagnostics.Debugger.IsAttached || TestContext.CurrentContext.Test.Properties ["Output"] == null)
 					return;
 			// find the "root" directory just below "temp" and clean from there because

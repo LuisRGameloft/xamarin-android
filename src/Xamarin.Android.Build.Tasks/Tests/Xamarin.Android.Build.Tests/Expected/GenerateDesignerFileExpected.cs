@@ -27,8 +27,8 @@ namespace Foo.Foo
 		public partial class Animator
 		{
 			
-			// aapt resource value: 0
-			public static int slide_in_bottom = 0;
+			// aapt resource value: 0x7F070002
+			public const int slide_in_bottom = 2131165186;
 			
 			static Animator()
 			{
@@ -40,11 +40,56 @@ namespace Foo.Foo
 			}
 		}
 		
+		public partial class Array
+		{
+			
+			// aapt resource value: 0x7F130002
+			public const int widths_array = 2131951618;
+			
+			static Array()
+			{
+				global::Android.Runtime.ResourceIdManager.UpdateIdValues();
+			}
+			
+			private Array()
+			{
+			}
+		}
+		
+		public partial class Attribute
+		{
+			
+			static Attribute()
+			{
+				global::Android.Runtime.ResourceIdManager.UpdateIdValues();
+			}
+			
+			private Attribute()
+			{
+			}
+		}
+		
+		public partial class Dimension
+		{
+			
+			// aapt resource value: 0x7F120002
+			public const int main_text_item_size = 2131886082;
+			
+			static Dimension()
+			{
+				global::Android.Runtime.ResourceIdManager.UpdateIdValues();
+			}
+			
+			private Dimension()
+			{
+			}
+		}
+		
 		public partial class Drawable
 		{
 			
-			// aapt resource value: 0
-			public static int ic_menu_preferences = 0;
+			// aapt resource value: 0x7F080002
+			public const int ic_menu_preferences = 2131230722;
 			
 			static Drawable()
 			{
@@ -59,8 +104,8 @@ namespace Foo.Foo
 		public partial class Font
 		{
 			
-			// aapt resource value: 0
-			public static int arial = 0;
+			// aapt resource value: 0x7F090002
+			public const int arial = 2131296258;
 			
 			static Font()
 			{
@@ -75,8 +120,14 @@ namespace Foo.Foo
 		public partial class Id
 		{
 			
-			// aapt resource value: 0
-			public static int menu_settings = 0;
+			// aapt resource value: 0x7F010004
+			public const int menu_settings = 2130771972;
+			
+			// aapt resource value: 0x7F010002
+			public const int seekBar = 2130771970;
+			
+			// aapt resource value: 0x7F010003
+			public const int seekbar = 2130771971;
 			
 			static Id()
 			{
@@ -88,11 +139,27 @@ namespace Foo.Foo
 			}
 		}
 		
+		public partial class Layout
+		{
+			
+			// aapt resource value: 0x7F020002
+			public const int main = 2130837506;
+			
+			static Layout()
+			{
+				global::Android.Runtime.ResourceIdManager.UpdateIdValues();
+			}
+			
+			private Layout()
+			{
+			}
+		}
+		
 		public partial class Menu
 		{
 			
-			// aapt resource value: 0
-			public static int Options = 0;
+			// aapt resource value: 0x7F100002
+			public const int Options = 2131755010;
 			
 			static Menu()
 			{
@@ -107,8 +174,8 @@ namespace Foo.Foo
 		public partial class Mipmap
 		{
 			
-			// aapt resource value: 0
-			public static int icon = 0;
+			// aapt resource value: 0x7F110002
+			public const int icon = 2131820546;
 			
 			static Mipmap()
 			{
@@ -120,11 +187,27 @@ namespace Foo.Foo
 			}
 		}
 		
+		public partial class Raw
+		{
+			
+			// aapt resource value: 0x7F030002
+			public const int foo = 2130903042;
+			
+			static Raw()
+			{
+				global::Android.Runtime.ResourceIdManager.UpdateIdValues();
+			}
+			
+			private Raw()
+			{
+			}
+		}
+		
 		public partial class Plurals
 		{
 			
-			// aapt resource value: 0
-			public static int num_locations_reported = 0;
+			// aapt resource value: 0x7F060002
+			public const int num_locations_reported = 2131099650;
 			
 			static Plurals()
 			{
@@ -139,17 +222,17 @@ namespace Foo.Foo
 		public partial class String
 		{
 			
-			// aapt resource value: 0
-			public static int app_name = 0;
+			// aapt resource value: 0x7F050003
+			public const int app_name = 2131034115;
 			
-			// aapt resource value: 0
-			public static int foo = 0;
+			// aapt resource value: 0x7F050005
+			public const int foo = 2131034117;
 			
-			// aapt resource value: 0
-			public static int hello = 0;
+			// aapt resource value: 0x7F050002
+			public const int hello = 2131034114;
 			
-			// aapt resource value: 0
-			public static int menu_settings = 0;
+			// aapt resource value: 0x7F050004
+			public const int menu_settings = 2131034116;
 			
 			static String()
 			{
@@ -157,6 +240,22 @@ namespace Foo.Foo
 			}
 			
 			private String()
+			{
+			}
+		}
+		
+		public partial class Transition
+		{
+			
+			// aapt resource value: 0x7F040002
+			public const int transition = 2130968578;
+			
+			static Transition()
+			{
+				global::Android.Runtime.ResourceIdManager.UpdateIdValues();
+			}
+			
+			private Transition()
 			{
 			}
 		}

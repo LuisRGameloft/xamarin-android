@@ -15,6 +15,7 @@ FRAMEWORK_DIR     = bin/$(CONFIGURATION)/lib/xamarin.android/xbuild-frameworks/M
 run-api-compatibility-tests: $(MONO_API_HTML) $(MONO_API_INFO)
 	mkdir -p bin/Build$(CONFIGURATION)/compatibility
 	make -C external/xamarin-android-api-compatibility check \
+		STABLE_FRAMEWORKS="$(STABLE_FRAMEWORKS)" \
 		MONO_API_HTML="$(RUNTIME) $(abspath $(MONO_API_HTML))" \
 		MONO_API_INFO="$(RUNTIME) $(abspath $(MONO_API_INFO))" \
 		HTML_OUTPUT_DIR="$(abspath bin/Build$(CONFIGURATION)/compatibility)" \
@@ -29,5 +30,5 @@ MONO_API_INFO_REFS  = \
   bin/$(CONFIGURATION)/lib/xamarin.android/xbuild/Xamarin/Android/Xamarin.Android.Cecil.dll
 
 $(MONO_API_INFO): $(wildcard $(MONO_API_INFO_DIR)/*.cs) $(MONO_OPTIONS_SRC)
-	$(CSC) -out:$@ $^ /main:CorCompare.Driver \
+	$(CSC) -out:$@ $^ \
 		$(MONO_API_INFO_REFS:%=-r:%)

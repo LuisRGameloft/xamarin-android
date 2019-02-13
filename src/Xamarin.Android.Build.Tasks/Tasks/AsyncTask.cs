@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using Microsoft.Build.Utilities;
 using Microsoft.Build.Framework;
 using System.Threading;
@@ -6,9 +7,8 @@ using System.Collections;
 
 namespace Xamarin.Android.Tasks
 {
-	public class AsyncTask : Task, ICancelableTask {
+	public class AsyncTask : CancelableTask {
 
-		CancellationTokenSource tcs = new CancellationTokenSource ();
 		Queue logMessageQueue =new Queue ();
 		Queue warningMessageQueue = new Queue ();
 		Queue errorMessageQueue = new Queue ();
@@ -33,9 +33,20 @@ namespace Xamarin.Android.Tasks
 			Completed,
 		}
 
-		public CancellationToken Token { get { return tcs.Token; } }
+		protected struct OutputLine {
+			public string Line;
+			public bool StdError;
+
+			public OutputLine (string line, bool stdError)
+			{
+				Line = line;
+				StdError = stdError;
+			}
+		}
 
 		public bool YieldDuringToolExecution { get; set; }
+
+		protected string WorkingDirectory { get; private set; } 
 
 		[Obsolete ("Do not use the Log.LogXXXX from within your Async task as it will Lock the Visual Studio UI. Use the this.LogXXXX methods instead.")]
 		private new TaskLoggingHelper Log
@@ -47,11 +58,21 @@ namespace Xamarin.Android.Tasks
 		{
 			YieldDuringToolExecution = false;
 			UIThreadId = Thread.CurrentThread.ManagedThreadId;
+			WorkingDirectory = Directory.GetCurrentDirectory ();
 		}
 
-		public void Cancel ()
+		public override void Cancel ()
 		{
 			taskCancelled.Set ();
+		}
+
+		protected void Complete (System.Threading.Tasks.Task task)
+		{
+			if (task.Exception != null) {
+				var ex = task.Exception.GetBaseException ();
+				LogError (ex.Message + Environment.NewLine + ex.StackTrace);
+			}
+			Complete ();
 		}
 
 		public void Complete()
@@ -121,25 +142,30 @@ namespace Xamarin.Android.Tasks
 
 		public void LogError (string message)
 		{
-			LogError (code: null, message: message, file: null, lineNumber: 0);
+			LogCodedError (code: null, message: message, file: null, lineNumber: 0);
 		}
 
-		public void LogError (string message, params object[] messageArgs)
+		public void LogError (string message, params object [] messageArgs)
 		{
-			LogError (code: null, message: string.Format (message, messageArgs));
+			LogCodedError (code: null, message: string.Format (message, messageArgs));
 		}
 
 		public void LogCodedError (string code, string message)
 		{
-			LogError (code: code, message: message, file: null, lineNumber: 0);
+			LogCodedError (code: code, message: message, file: null, lineNumber: 0);
 		}
 
-		public void LogCodedError (string code, string message, params object[] messageArgs)
+		public void LogCodedError (string code, string message, params object [] messageArgs)
 		{
-			LogError (code: code, message: string.Format (message, messageArgs), file: null, lineNumber: 0);
+			LogCodedError (code: code, message: string.Format (message, messageArgs), file: null, lineNumber: 0);
 		}
 
-		public void LogError (string code, string message, string file = null, int lineNumber = 0)
+		public void LogCodedError (string code, string file, int lineNumber, string message, params object [] messageArgs)
+		{
+			LogCodedError (code: code, message: string.Format (message, messageArgs), file: file, lineNumber: lineNumber);
+		}
+
+		public void LogCodedError (string code, string message, string file, int lineNumber)
 		{
 			if (UIThreadId == Thread.CurrentThread.ManagedThreadId) {
 				#pragma warning disable 618
@@ -173,24 +199,54 @@ namespace Xamarin.Android.Tasks
 			EnqueueMessage (errorMessageQueue, data, errorDataAvailable);
 		}
 
-		public void LogWarning (string message, params object[] messageArgs)
+		public void LogWarning (string message)
 		{
-			LogWarning (string.Format (message, messageArgs));
+			LogCodedWarning (code: null, message: message, file: null, lineNumber: 0);
 		}
 
-		public void LogWarning (string message)
+		public void LogWarning (string message, params object[] messageArgs)
+		{
+			LogCodedWarning (code: null, message: string.Format (message, messageArgs));
+		}
+
+		public void LogCodedWarning (string code, string message)
+		{
+			LogCodedWarning (code: code, message: message, file: null, lineNumber: 0);
+		}
+
+		public void LogCodedWarning (string code, string message, params object [] messageArgs)
+		{
+			LogCodedWarning (code: code, message: string.Format (message, messageArgs), file: null, lineNumber: 0);
+		}
+
+		public void LogCodedWarning (string code, string file, int lineNumber, string message, params object [] messageArgs)
+		{
+			LogCodedWarning (code: code, message: string.Format (message, messageArgs), file: file, lineNumber: lineNumber);
+		}
+
+		public void LogCodedWarning (string code, string message, string file, int lineNumber)
 		{
 			if (UIThreadId == Thread.CurrentThread.ManagedThreadId) {
 				#pragma warning disable 618
-				Log.LogWarning (message);
+				Log.LogWarning (
+					subcategory: null,
+					warningCode: code,
+					helpKeyword: null,
+					file: file,
+					lineNumber: lineNumber,
+					columnNumber: 0,
+					endLineNumber: 0,
+					endColumnNumber: 0,
+					message: message
+				);
 				return;
 				#pragma warning restore 618
 			}
 			var data = new BuildWarningEventArgs (
 					subcategory: null,
-					code: null,
-					file: null,
-					lineNumber: 0,
+					code: code,
+					file: file,
+					lineNumber: lineNumber,
 					columnNumber: 0,
 					endLineNumber: 0,
 					endColumnNumber: 0,
@@ -242,6 +298,18 @@ namespace Xamarin.Android.Tasks
 			}
 		}
 
+		protected void Yield ()
+		{
+			if (YieldDuringToolExecution && BuildEngine is IBuildEngine3)
+				((IBuildEngine3)BuildEngine).Yield ();
+		}
+
+		protected void Reacquire ()
+		{
+			if (YieldDuringToolExecution && BuildEngine is IBuildEngine3)
+				((IBuildEngine3)BuildEngine).Reacquire ();
+		}
+
 		protected void WaitForCompletion ()
 		{
 			WaitHandle[] handles = new WaitHandle[] {
@@ -252,8 +320,6 @@ namespace Xamarin.Android.Tasks
 				taskCancelled,
 				completed,
 			};
-			if (YieldDuringToolExecution && BuildEngine is IBuildEngine3)
-				(BuildEngine as IBuildEngine3).Yield ();
 			try {
 				while (isRunning) {
 					var index = (WaitHandleIndex)System.Threading.WaitHandle.WaitAny (handles, TimeSpan.FromMilliseconds (10));
@@ -275,7 +341,7 @@ namespace Xamarin.Android.Tasks
 					case WaitHandleIndex.WarningDataAvailable:
 						LogInternal<BuildWarningEventArgs> (warningMessageQueue, (e) => {
 							#pragma warning disable 618
-							Log.LogWarning (e.Message);
+							Log.LogCodedWarning (e.Code, file: e.File, lineNumber: e.LineNumber, message: e.Message);
 							#pragma warning restore 618
 						}, warningDataAvailable);
 						break;
@@ -285,7 +351,7 @@ namespace Xamarin.Android.Tasks
 						}, customDataAvailable);
 						break;
 					case WaitHandleIndex.TaskCancelled:
-						tcs.Cancel ();
+						base.Cancel ();
 						isRunning = false;
 						break;
 					case WaitHandleIndex.Completed:
@@ -296,8 +362,7 @@ namespace Xamarin.Android.Tasks
 
 			}
 			finally {
-				if (YieldDuringToolExecution && BuildEngine is IBuildEngine3)
-					(BuildEngine as IBuildEngine3).Reacquire ();
+
 			}
 		}
 	}

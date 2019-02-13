@@ -12,9 +12,11 @@ TestResult.xml
 TestResult-*.xml
 TestResult-*.csv
 .vs/
+.vscode/
 .gradle/
 Resource.designer.cs
 logcat-*.txt
 apk-sizes-*.txt
 *.rawproto
+*.binlog
 src/Xamarin.Android.Build.Tasks/Xamarin.Android.Common.props

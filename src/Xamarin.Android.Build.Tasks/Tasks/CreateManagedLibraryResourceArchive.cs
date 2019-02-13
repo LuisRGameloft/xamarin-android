@@ -1,23 +1,18 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Xml;
-using System.Xml.Linq;
 using Microsoft.Build.Utilities;
 using Microsoft.Build.Framework;
-using System.Text.RegularExpressions;
-using Xamarin.Tools.Zip;
 
 using Xamarin.Android.Tools;
 
 namespace Xamarin.Android.Tasks
 {
+	/// <summary>
+	/// Creates __AndroidLibraryProjects__.zip, $(AndroidApplication) should be False!
+	/// </summary>
 	public class CreateManagedLibraryResourceArchive : Task
 	{
-		public bool IsApplication { get; set; }
-		
 		[Required]
 		public string OutputDirectory { get; set; }
 
@@ -33,6 +28,8 @@ namespace Xamarin.Android.Tasks
 
 		public ITaskItem [] RemovedAndroidResourceFiles { get; set; }
 
+		public string FlatArchivesDirectory { get; set; }
+
 		[Required]
 		public string ResourceDirectory { get; set; }
 
@@ -42,18 +39,6 @@ namespace Xamarin.Android.Tasks
 		
 		public override bool Execute ()
 		{
-			if (IsApplication)
-				return true;
-
-			Log.LogDebugMessage ("CreateManagedLibraryResourceArchive Task");
-			Log.LogDebugMessage ("  OutputDirectory: {0}", OutputDirectory);
-			Log.LogDebugMessage ("  ResourceDirectory: {0}", ResourceDirectory);
-			Log.LogDebugTaskItems ("  AndroidAssets:", AndroidAssets);
-			Log.LogDebugTaskItems ("  AndroidJavaSources:", AndroidJavaSources);
-			Log.LogDebugTaskItems ("  AndroidJavaLibraries:", AndroidJavaLibraries);
-			Log.LogDebugTaskItems ("  AndroidResourcesInThisExactProject:", AndroidResourcesInThisExactProject);
-			Log.LogDebugTaskItems ("  RemovedAndroidResourceFiles:", RemovedAndroidResourceFiles);
-
 			var outDirInfo = new DirectoryInfo (OutputDirectory);
 			
 			// Copy files into _LibraryProjectImportsDirectoryName (library_project_imports) dir.
@@ -63,6 +48,12 @@ namespace Xamarin.Android.Tasks
 				var subdirInfo = new DirectoryInfo (Path.Combine (outDirInfo.FullName, sub));
 				if (!subdirInfo.Exists)
 					subdirInfo.Create ();
+			}
+
+			var compiledArchive = Path.Combine (FlatArchivesDirectory, "compiled.flata");
+			if (File.Exists (compiledArchive)) {
+				Log.LogDebugMessage ($"Coping: {compiledArchive} to {outDirInfo.FullName}");
+				MonoAndroidHelper.CopyIfChanged (compiledArchive, Path.Combine (outDirInfo.FullName, "compiled.flata"));
 			}
 
 			var dir_sep = new char [] {Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar};
@@ -79,7 +70,6 @@ namespace Xamarin.Android.Tasks
 				}
 			}
 			// resources folders are converted to the structure that aapt accepts.
-			bool hasInvalidName = false;
 			foreach (var srcsub in Directory.GetDirectories (ResourceDirectory)) {
 				var dstsub = Path.Combine (outDirInfo.FullName, "res", Path.GetFileName (srcsub));
 				if (!Directory.Exists (dstsub))
@@ -99,8 +89,6 @@ namespace Xamarin.Android.Tasks
 
 				}
 			}
-			if (hasInvalidName)
-				return false;
 			if (AndroidJavaSources != null)
 				foreach (var item in AndroidJavaSources)
 					MonoAndroidHelper.CopyIfChanged (item.ItemSpec, Path.Combine (outDirInfo.FullName, item.ItemSpec));
@@ -115,14 +103,14 @@ namespace Xamarin.Android.Tasks
 				Log.LogMessage ("writing __res_name_case_map.txt...");
 				foreach (var res in AndroidResourcesInThisExactProject)
 					nameCaseMap.WriteLine ("{0};{1}", res.GetMetadata ("LogicalName").Replace ('\\', '/'), Path.Combine (Path.GetFileName (Path.GetDirectoryName (res.ItemSpec)), Path.GetFileName (res.ItemSpec)).Replace ('\\', '/'));
-				File.WriteAllText (Path.Combine (OutputDirectory, "__res_name_case_map.txt"), nameCaseMap.ToString ());
+				File.WriteAllText (Path.Combine (outDirInfo.FullName, "__res_name_case_map.txt"), nameCaseMap.ToString ());
 			}
 
 			var outpath = Path.Combine (outDirInfo.Parent.FullName, "__AndroidLibraryProjects__.zip");
 			var fileMode = File.Exists (outpath) ? FileMode.Open : FileMode.CreateNew;
 			if (Files.ArchiveZipUpdate (outpath, f => {
 				using (var zip = new ZipArchiveEx (f, fileMode)) {
-					zip.AddDirectory (OutputDirectory, "library_project_imports");
+					zip.AddDirectory (outDirInfo.FullName, "library_project_imports");
 					if (RemovedAndroidResourceFiles != null) {
 						foreach (var r in RemovedAndroidResourceFiles) {
 							Log.LogDebugMessage ($"Removed {r.ItemSpec} from {outpath}");
@@ -134,7 +122,7 @@ namespace Xamarin.Android.Tasks
 				Log.LogDebugMessage ("Saving contents to " + outpath);
 			}
 
-			return true;
+			return !Log.HasLoggedErrors ;
 		}
 	}
 }

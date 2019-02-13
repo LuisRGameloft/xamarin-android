@@ -16,9 +16,6 @@ namespace Xamarin.Android.Tasks
 		private XNamespace androidNs = "http://schemas.android.com/apk/res/android";
 
 		[Required]
-		public string AndroidSdkDirectory { get; set; }
-
-		[Required]
 		public string AndroidSdkPlatform { get; set; }
 
 		public string AndroidManifest { get; set; }
@@ -31,11 +28,6 @@ namespace Xamarin.Android.Tasks
 
 		public override bool Execute ()
 		{
-			Log.LogDebugMessage ("GetJavaPlatformJar Task");
-			Log.LogDebugMessage ("  AndroidSdkDirectory: {0}", AndroidSdkDirectory);
-			Log.LogDebugMessage ("  AndroidSdkPlatform: {0}", AndroidSdkPlatform);
-			Log.LogDebugMessage ("  AndroidManifest: {0}", AndroidManifest);
-			
 			var platform = AndroidSdkPlatform;
 
 			XAttribute target_sdk = null;
@@ -59,6 +51,24 @@ namespace Xamarin.Android.Tasks
 
 							if (target_sdk != null && !string.IsNullOrWhiteSpace (target_sdk.Value))
 								platform = target_sdk.Value;
+
+							var min_sdk = uses_sdk.Attribute (androidNs + "minSdkVersion");
+							if (min_sdk != null && (!int.TryParse (min_sdk.Value, out int minSdkVersion) || minSdkVersion < XABuildConfig.NDKMinimumApiAvailable)) {
+								LogWarningForManifest (
+										warningCode:      "XA4216",
+										attribute:        min_sdk,
+										message:          "AndroidManifest.xml //uses-sdk/@android:minSdkVersion '{0}' is less than API-{1}, this configuration is not supported.",
+										messageArgs:      new object [] { min_sdk?.Value, XABuildConfig.NDKMinimumApiAvailable }
+								);
+							}
+							if (target_sdk != null && (!int.TryParse (target_sdk.Value, out int targetSdkVersion) || targetSdkVersion < XABuildConfig.NDKMinimumApiAvailable)) {
+								LogWarningForManifest (
+										warningCode:      "XA4216",
+										attribute:        target_sdk,
+										message:          "AndroidManifest.xml //uses-sdk/@android:targetSdkVersion '{0}' is less than API-{1}, this configuration is not supported.",
+										messageArgs:      new object [] { target_sdk?.Value, XABuildConfig.NDKMinimumApiAvailable }
+								);
+							}
 						}
 					}
 				} catch (Exception ex) {
@@ -73,10 +83,7 @@ namespace Xamarin.Android.Tasks
 			if (JavaPlatformJarPath == null)
 				return !Log.HasLoggedErrors;
 
-			TargetSdkVersion = platform;
-
-			Log.LogDebugMessage ("  [Output] JavaPlatformJarPath: {0}", JavaPlatformJarPath);
-			Log.LogDebugMessage ("  [Output] TargetSdkVersion: {0}", TargetSdkVersion);
+			TargetSdkVersion = MonoAndroidHelper.SupportedVersions.GetApiLevelFromId (platform).ToString ();
 
 			return !Log.HasLoggedErrors;
 		}
@@ -90,22 +97,9 @@ namespace Xamarin.Android.Tasks
 			if (int.TryParse (targetFrameworkVersion, out frameworkSdk) &&
 					int.TryParse (targetSdkVersion, out targetSdk) &&
 					targetSdk < frameworkSdk) {
-				int lineNumber    = 0;
-				int columnNumber  = 0;
-				var lineInfo      = target_sdk as IXmlLineInfo;
-				if (lineInfo != null && lineInfo.HasLineInfo ()) {
-					lineNumber    = lineInfo.LineNumber;
-					columnNumber  = lineInfo.LinePosition;
-				}
-				Log.LogWarning (
-						subcategory:      string.Empty,
+				LogWarningForManifest (
 						warningCode:      "XA4211",
-						helpKeyword:      string.Empty,
-						file:             AndroidManifest,
-						lineNumber:       lineNumber,
-						columnNumber:     columnNumber,
-						endLineNumber:    0,
-						endColumnNumber:  0,
+						attribute:        target_sdk,
 						message:          "AndroidManifest.xml //uses-sdk/@android:targetSdkVersion '{0}' is less than $(TargetFrameworkVersion) '{1}'. Using API-{2} for ACW compilation.",
 						messageArgs:      new[]{
 							targetSdkVersion,
@@ -116,6 +110,29 @@ namespace Xamarin.Android.Tasks
 				return targetFrameworkVersion;
 			}
 			return targetSdkVersion;
+		}
+
+		void LogWarningForManifest (string warningCode, XAttribute attribute, string message, params object[] messageArgs)
+		{
+			int lineNumber    = 0;
+			int columnNumber  = 0;
+			var lineInfo      = attribute as IXmlLineInfo;
+			if (lineInfo != null && lineInfo.HasLineInfo ()) {
+				lineNumber    = lineInfo.LineNumber;
+				columnNumber  = lineInfo.LinePosition;
+			}
+			Log.LogWarning (
+					subcategory:      string.Empty,
+					warningCode:      warningCode,
+					helpKeyword:      string.Empty,
+					file:             AndroidManifest,
+					lineNumber:       lineNumber,
+					columnNumber:     columnNumber,
+					endLineNumber:    0,
+					endColumnNumber:  0,
+					message:          message,
+					messageArgs:      messageArgs
+			);
 		}
 	}
 }

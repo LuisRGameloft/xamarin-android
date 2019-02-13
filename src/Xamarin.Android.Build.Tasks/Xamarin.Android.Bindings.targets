@@ -30,7 +30,8 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
   <UsingTask TaskName="Xamarin.Android.Tasks.ResolveAssemblies" AssemblyFile="Xamarin.Android.Build.Tasks.dll" />
   <UsingTask TaskName="Xamarin.Android.Tasks.ResolveLibraryProjectImports" AssemblyFile="Xamarin.Android.Build.Tasks.dll" />
   <UsingTask TaskName="Xamarin.Android.Tasks.ResolveSdks" AssemblyFile="Xamarin.Android.Build.Tasks.dll" />
-  <UsingTask TaskName="Xamarin.Android.Tasks.ReadResolvedSdksCache" AssemblyFile="Xamarin.Android.Build.Tasks.dll" />
+  <UsingTask TaskName="Xamarin.Android.Tasks.ValidateJavaVersion" AssemblyFile="Xamarin.Android.Build.Tasks.dll" />
+  <UsingTask TaskName="Xamarin.Android.Tasks.ResolveAndroidTooling" AssemblyFile="Xamarin.Android.Build.Tasks.dll" />
   <UsingTask TaskName="Xamarin.Android.Tasks.ReadLibraryProjectImportsCache" AssemblyFile="Xamarin.Android.Build.Tasks.dll" />
   <UsingTask TaskName="Xamarin.Android.Tasks.ReadImportedLibrariesCache" AssemblyFile="Xamarin.Android.Build.Tasks.dll" />
   <UsingTask TaskName="Xamarin.Android.Tasks.CreateNativeLibraryArchive" AssemblyFile="Xamarin.Android.Build.Tasks.dll" />
@@ -61,10 +62,11 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
     <AndroidUseLatestPlatformSdk Condition="'$(AndroidUseLatestPlatformSdk)' == ''">False</AndroidUseLatestPlatformSdk>
     <TargetFrameworkIdentifier>MonoAndroid</TargetFrameworkIdentifier>
     <MonoAndroidVersion>v5.0</MonoAndroidVersion>
-    <TargetFrameworkVersion Condition="'$(TargetFrameworkVersion)' == '' And '$(AndroidUseLatestPlatformSdk)' == 'False'">v2.3</TargetFrameworkVersion>
+    <TargetFrameworkVersion Condition="'$(TargetFrameworkVersion)' == '' And '$(AndroidUseLatestPlatformSdk)' == 'False'">v4.4</TargetFrameworkVersion>
     <UseShortFileNames Condition="'$(UseShortFileNames)' == ''">True</UseShortFileNames>
     <UseShortGeneratorFileNames Condition="'$(UseShortGeneratorFileNames)' == ''">False</UseShortGeneratorFileNames>
     <AndroidClassParser Condition=" '$(AndroidClassParser)' == '' ">jar2xml</AndroidClassParser>
+    <AndroidCodegenTarget Condition=" '$(AndroidCodegenTarget)' == '' ">XAJavaInterop1</AndroidCodegenTarget>
   </PropertyGroup>
   
   <!-- Get our Build Actions to show up in VS -->
@@ -137,6 +139,7 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
 
     <CompileDependsOn>
       _SetupDesignTimeBuildForCompile;
+      AddLibraryJarsToBind;
       $(CompileDependsOn);
     </CompileDependsOn>
 
@@ -165,36 +168,46 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
 	</GetReferenceAssemblyPaths>
 </Target>
 
-<Target Name="_SetLatestTargetFrameworkVersion" DependsOnTargets="_GetReferenceAssemblyPaths">
-	<ResolveSdks
-			AndroidApiLevel="$(AndroidApiLevel)"
-			AndroidSdkBuildToolsVersion="$(AndroidSdkBuildToolsVersion)"
-			AndroidSdkPath="$(AndroidSdkDirectory)"
-			AndroidNdkPath="$(AndroidNdkDirectory)"
-			BuildingInsideVisualStudio="$(BuildingInsideVisualStudio)"
-			JavaSdkPath="$(JavaSdkDirectory)"
-			ProjectFilePath="$(MSBuildProjectFullPath)"
-			ReferenceAssemblyPaths="$(_XATargetFrameworkDirectories)"
-			TargetFrameworkVersion="$(TargetFrameworkVersion)"
-			SequencePointsMode="$(AndroidSequencePointsMode)"
-			UseLatestAndroidPlatformSdk="$(AndroidUseLatestPlatformSdk)"
-			JavaToolExe="$(JavaToolExe)"
-			LatestSupportedJavaVersion="$(LatestSupportedJavaVersion)"
-			MinimumSupportedJavaVersion="$(MinimumSupportedJavaVersion)"
-	>
-		<Output TaskParameter="AndroidApiLevel"           PropertyName="_AndroidApiLevel"           Condition="'$(_AndroidApiLevel)' == ''" />
-		<Output TaskParameter="AndroidApiLevelName"       PropertyName="_AndroidApiLevelName" />
-		<Output TaskParameter="TargetFrameworkVersion"    PropertyName="_TargetFrameworkVersion" />
-		<Output TaskParameter="TargetFrameworkVersion"    PropertyName="TargetFrameworkVersion" />
-		<Output TaskParameter="AndroidNdkPath"            PropertyName="AndroidNdkDirectory"        Condition="'$(AndroidNdkDirectory)' == ''" />
-		<Output TaskParameter="AndroidSdkPath"            PropertyName="AndroidSdkDirectory"        Condition="'$(AndroidSdkDirectory)' == ''" />
-		<Output TaskParameter="AndroidSdkBuildToolsPath"  PropertyName="AndroidSdkBuildToolsPath"   Condition="'$(AndroidSdkBuildToolsPath)' == ''" />
-		<Output TaskParameter="JavaSdkPath"               PropertyName="JavaSdkDirectory"           Condition="'$(JavaSdkDirectory)' == ''" />
-		<Output TaskParameter="MonoAndroidToolsPath"      PropertyName="MonoAndroidToolsDirectory" />
-		<Output TaskParameter="AndroidSdkBuildToolsBinPath" PropertyName="AndroidSdkBuildToolsBinPath" Condition="'$(AndroidSdkBuildToolsBinPath)' == ''" />
-		<Output TaskParameter="JdkVersion"                PropertyName="_JdkVersion" />
-		<Output TaskParameter="MinimumRequiredJdkVersion" PropertyName="_DefaultJdkVersion" />
-	</ResolveSdks>
+  <Target Name="_SetLatestTargetFrameworkVersion" DependsOnTargets="_GetReferenceAssemblyPaths">
+    <ResolveSdks
+        AndroidSdkPath="$(AndroidSdkDirectory)"
+        AndroidNdkPath="$(AndroidNdkDirectory)"
+        JavaSdkPath="$(JavaSdkDirectory)"
+        ReferenceAssemblyPaths="$(_XATargetFrameworkDirectories)">
+      <Output TaskParameter="AndroidNdkPath"            PropertyName="AndroidNdkDirectory" Condition=" '$(AndroidNdkDirectory)' == '' " />
+      <Output TaskParameter="AndroidSdkPath"            PropertyName="AndroidSdkDirectory" Condition=" '$(AndroidSdkDirectory)' == '' " />
+      <Output TaskParameter="JavaSdkPath"               PropertyName="JavaSdkDirectory"    Condition=" '$(JavaSdkDirectory)' == '' " />
+      <Output TaskParameter="AndroidNdkPath"            PropertyName="_AndroidNdkDirectory" />
+      <Output TaskParameter="AndroidSdkPath"            PropertyName="_AndroidSdkDirectory" />
+      <Output TaskParameter="JavaSdkPath"               PropertyName="_JavaSdkDirectory" />
+      <Output TaskParameter="MonoAndroidToolsPath"      PropertyName="MonoAndroidToolsDirectory" />
+      <Output TaskParameter="MonoAndroidBinPath"        PropertyName="MonoAndroidBinDirectory" />
+    </ResolveSdks>
+    <ValidateJavaVersion
+        TargetFrameworkVersion="$(TargetFrameworkVersion)"
+        AndroidSdkBuildToolsVersion="$(AndroidSdkBuildToolsVersion)"
+        JavaSdkPath="$(_JavaSdkDirectory)"
+        JavaToolExe="$(JavaToolExe)"
+        JavacToolExe="$(JavacToolExe)"
+        LatestSupportedJavaVersion="$(LatestSupportedJavaVersion)"
+        MinimumSupportedJavaVersion="$(MinimumSupportedJavaVersion)">
+      <Output TaskParameter="JdkVersion"                PropertyName="_JdkVersion" />
+      <Output TaskParameter="MinimumRequiredJdkVersion" PropertyName="_DefaultJdkVersion" />
+    </ValidateJavaVersion>
+    <ResolveAndroidTooling
+        TargetFrameworkVersion="$(TargetFrameworkVersion)"
+        AndroidApiLevel="$(AndroidApiLevel)"
+        AndroidSdkPath="$(_AndroidSdkDirectory)"
+        AndroidSdkBuildToolsVersion="$(AndroidSdkBuildToolsVersion)"
+        UseLatestAndroidPlatformSdk="$(AndroidUseLatestPlatformSdk)"
+        SequencePointsMode="$(AndroidSequencePointsMode)"
+        ProjectFilePath="$(MSBuildProjectFullPath)">
+      <Output TaskParameter="TargetFrameworkVersion"      PropertyName="TargetFrameworkVersion" />
+      <Output TaskParameter="AndroidApiLevel"             PropertyName="_AndroidApiLevel"            Condition="'$(_AndroidApiLevel)' == ''" />
+      <Output TaskParameter="AndroidApiLevelName"         PropertyName="_AndroidApiLevelName" />
+      <Output TaskParameter="AndroidSdkBuildToolsPath"    PropertyName="AndroidSdkBuildToolsPath"    Condition="'$(AndroidSdkBuildToolsPath)' == ''" />
+      <Output TaskParameter="AndroidSdkBuildToolsBinPath" PropertyName="AndroidSdkBuildToolsBinPath" Condition="'$(AndroidSdkBuildToolsBinPath)' == ''" />
+    </ResolveAndroidTooling>
     <CreateProperty Value="$(TargetFrameworkIdentifier),Version=$(TargetFrameworkVersion),Profile=$(TargetFrameworkProfile)">
       <Output TaskParameter="Value" PropertyName="TargetFrameworkMoniker"
           Condition="'$(TargetFrameworkProfile)' != ''"
@@ -213,34 +226,25 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
   <!-- Find all the needed SDKs -->
   <Target Name="_ResolveMonoAndroidSdks" DependsOnTargets="_ResolveMonoAndroidFramework">
 
-    <Error Text="Could not locate Android SDK." Condition="'$(AndroidSdkDirectory)'==''" />
-    <Error Text="Could not locate Java 6 or 7 SDK.  (Download from http://www.oracle.com/technetwork/java/javase/downloads.)" Condition="'$(JavaSdkDirectory)'==''" />
+    <Error Text="Could not locate Android SDK." Condition="'$(_AndroidSdkDirectory)'==''" />
+    <Error Text="Could not locate Java 6 or 7 SDK.  (Download from http://www.oracle.com/technetwork/java/javase/downloads.)" Condition="'$(_JavaSdkDirectory)'==''" />
 
-    <CreateProperty Value="$(AndroidNdkDirectory)">
-      <Output TaskParameter="Value" PropertyName="_AndroidNdkDirectory"/>
-    </CreateProperty>
     <CreateProperty Value="$(_AndroidNdkDirectory)\">
       <Output TaskParameter="Value" PropertyName="_AndroidNdkDirectory"
         Condition="!HasTrailingSlash('$(_AndroidNdkDirectory)')" />
     </CreateProperty>
 
-    <CreateProperty Value="$(AndroidSdkDirectory)">
-      <Output TaskParameter="Value" PropertyName="_AndroidSdkDirectory"/>
-    </CreateProperty>
     <CreateProperty Value="$(_AndroidSdkDirectory)\">
       <Output TaskParameter="Value" PropertyName="_AndroidSdkDirectory"
         Condition="!HasTrailingSlash('$(_AndroidSdkDirectory)')" />
     </CreateProperty>
 
-    <CreateProperty Value="$(JavaSdkDirectory)">
-      <Output TaskParameter="Value" PropertyName="_JavaSdkDirectory"/>
-    </CreateProperty>
     <CreateProperty Value="$(_JavaSdkDirectory)\">
       <Output TaskParameter="Value" PropertyName="_JavaSdkDirectory"
         Condition="!HasTrailingSlash('$(_JavaSdkDirectory)')" />
     </CreateProperty>
 
-	<CreateProperty Value="$(_JavaSdkDirectory)\bin">
+	<CreateProperty Value="$(_JavaSdkDirectory)bin">
 		<Output TaskParameter="Value" PropertyName="JavaToolPath"
 				Condition="'$(JavaToolPath)' == ''"
 		/>
@@ -313,6 +317,7 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
 		Assemblies="@(ReferencePath);@(ReferenceDependencyPaths)"
 		AarLibraries="@(AndroidAarLibrary)"
 		ImportsDirectory="$(_LibraryProjectImportsDirectoryName)"
+		NativeImportsDirectory="$(_NativeLibraryImportsDirectoryName)"
 		UseShortFileNames="$(UseShortFileNames)"
 		OutputDirectory="$(IntermediateOutputPath)"
 		AssemblyIdentityMapFile="$(_AndroidLibrayProjectAssemblyMapFile)"
@@ -335,6 +340,10 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
 			CacheFile="$(_AndroidLibraryImportsCache)">
 		<Output TaskParameter="Jars" ItemName="ExtractedJarImports" />
 	</GetImportedLibraries>
+
+    <CreateItem Include="@(ZippedLibraryProjectJars);@(ExtractedJarImports)">
+      <Output TaskParameter="Include" ItemName="ReferenceJar" />
+    </CreateItem>
 </Target>
 
 <Target Name="_GetLibraryImports" DependsOnTargets="_BuildLibraryImportsCache">
@@ -377,9 +386,12 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
     <Unzip Sources="@(JavaSourceJar)" DestinationDirectories="@(JavaSourceJar->'$(IntermediateOutputPath)javasources\%(FileName)')" />
 	
     <JavaDoc
+        ContinueOnError="true"
         ToolPath="$(JavaToolPath)"
         SourceDirectories="@(JavaSourceJar->'$(IntermediateOutputPath)javasources\%(FileName)')"
         DestinationDirectories="@(JavaSourceJar->'$(IntermediateOutputPath)javadocs\%(FileName)')"
+        ReferenceJars="@(EmbeddedReferenceJar);@(ReferenceJar);@(_AdditionalJavaLibraryReferences)"
+        JavaPlatformJar="$(_AndroidSdkDirectory)\platforms\android-$(_AndroidApiLevel)\android.jar"
         />
 	
     <Touch Files="@(JavaSourceJar->'$(IntermediateOutputPath)javasources\%(FileName).stamp')" AlwaysCreate="True" />
@@ -394,10 +406,6 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
           DependsOnTargets="$(ExportJarToXmlDependsOnTargets)"
           Inputs="@(EmbeddedJar);@(EmbeddedReferenceJar);@(InputJar);@(ReferenceJar);$(MSBuildAllProjects);@(_AdditionalJavaLibraryReferences)"
           Outputs="$(ApiOutputFile)">
-
-    <CreateItem Include="@(ZippedLibraryProjectJars);@(ExtractedJarImports)">
-      <Output TaskParameter="Include" ItemName="ReferenceJar" />
-    </CreateItem>
 
     <ItemGroup>
       <_AndroidDocumentationPath Include="@(JavaDocIndex->'%(RootDir)\%(Directory)')" />
@@ -541,6 +549,7 @@ Copyright (C) 2012 Xamarin Inc. All rights reserved.
 		ToolExe="$(MDocToolExe)"
     	 />
     <ImportJavaDoc
+    	ContinueOnError="true"
     	JavaDocs="@(JavaDocIndex)"
     	References="@(ReferencePath);@(ReferenceDependencyPaths)"
     	Transforms="@(TransformFile)"

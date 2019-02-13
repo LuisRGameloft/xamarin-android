@@ -13,6 +13,11 @@ namespace Xamarin.Android.UnitTests
 {
 	public abstract class TestInstrumentation <TRunner> : Instrumentation where TRunner: TestRunner
 	{
+		protected sealed class KnownArguments
+		{
+			public const string LogLevel = "loglevel";
+		}
+
 		const string ResultExecutedTests = "run";
 		const string ResultPassedTests = "passed";
 		const string ResultSkippedTests = "skipped";
@@ -70,8 +75,23 @@ namespace Xamarin.Android.UnitTests
 		public override void OnCreate (Bundle arguments)
 		{
 			base.OnCreate (arguments);
+			ProcessArguments (arguments);
 			this.arguments = arguments;
 			Start ();
+		}
+
+		protected virtual void ProcessArguments (Bundle arguments)
+		{
+			// Because of the way GetStringExtrasFromBundle below is implemented, we need to remove from the
+			// bundle the arguments we know. GetStringExtrasFromBundle treats all entries as category
+			// filters.
+			if (arguments == null)
+				return;
+
+			if (arguments.ContainsKey (KnownArguments.LogLevel)) {
+				Logger.SetMinimuLogLevelFromString (arguments.GetString (KnownArguments.LogLevel)?.Trim ());
+				arguments.Remove (KnownArguments.LogLevel);
+			}
 		}
 
 		public override void OnStart ()
@@ -313,6 +333,17 @@ namespace Xamarin.Android.UnitTests
 		protected virtual Assembly LoadTestAssembly (string filePath)
 		{
 			return Assembly.LoadFrom (filePath);
+		}
+
+		protected Dictionary<string, string> GetStringExtrasFromBundle ()
+		{
+			var filtersFromBundle = new Dictionary<string, string> ();
+			foreach (var key in arguments.KeySet ()) {
+				string value = arguments.GetString (key);
+				if (!string.IsNullOrEmpty (value))
+					filtersFromBundle.Add (key, value);
+			}
+			return filtersFromBundle;
 		}
 
 		protected virtual void ConfigureFilters (TRunner runner)

@@ -81,6 +81,9 @@ namespace Xamarin.Android.Tasks
 
 		public override bool Execute ()
 		{
+			if (!NdkUtil.Init (Log, AndroidNdkDirectory))
+				return false;
+
 			try {
 				return DoExecute ();
 			} catch (Exception e) {
@@ -126,26 +129,42 @@ namespace Xamarin.Android.Tasks
 			return false;
 		}
 
-		static string GetNdkToolchainLibraryDir(string binDir)
+		static string GetNdkToolchainLibraryDir(string binDir, string archDir = null)
 		{
 			var baseDir = Path.GetFullPath(Path.Combine(binDir, ".."));
 
-			var gccLibDir = Directory.EnumerateDirectories(
-			Path.Combine(baseDir, "lib", "gcc")).ToList();
+			string libDir = Path.Combine (baseDir, "lib", "gcc");
+			if (!String.IsNullOrEmpty (archDir))
+				libDir = Path.Combine (libDir, archDir);
+
+			var gccLibDir = Directory.EnumerateDirectories (libDir).ToList();
 			gccLibDir.Sort();
 
 			var libPath = gccLibDir.LastOrDefault();
-			if (libPath == null)
-				throw new Exception("Could not find a valid NDK GCC toolchain library path");
+			if (libPath == null) {
+				goto no_toolchain_error;
+			}
+
+			if (NdkUtil.UsingClangNDK)
+				return libPath;
 
 			gccLibDir = Directory.EnumerateDirectories(libPath).ToList();
 			gccLibDir.Sort();
 
 			libPath = gccLibDir.LastOrDefault();
-			if (libPath == null)
-				throw new Exception("Could not find a valid NDK GCC toolchain library path");
+			if (libPath == null) {
+				goto no_toolchain_error;
+			}
 
 			return libPath;
+
+		  no_toolchain_error:
+			throw new Exception("Could not find a valid NDK compiler toolchain library path");
+		}
+
+		static string GetNdkToolchainLibraryDir (string binDir, AndroidTargetArch arch)
+		{
+			return GetNdkToolchainLibraryDir (binDir, NdkUtil.GetArchDirName (arch));
 		}
 
 		static string GetShortPath (string path)
@@ -237,18 +256,21 @@ namespace Xamarin.Android.Tasks
 
 			var nativeLibs = new List<string> ();
 
-			var task = ThreadingTasks.Task.Run ( () => {
-				return RunParallelAotCompiler (nativeLibs);
-			}, Token);
+			Yield ();
+			try {
+				var task = ThreadingTasks.Task.Run ( () => {
+					return RunParallelAotCompiler (nativeLibs);
+				}, Token);
 
-			task.ContinueWith ( (t) => {
-				Complete ();
-			});
+				task.ContinueWith (Complete);
 
-			base.Execute ();
+				base.Execute ();
 
-			if (!task.Result)
-				return false;
+				if (!task.Result)
+					return false;
+			} finally {
+				Reacquire ();
+			}
 
 			NativeLibrariesReferences = nativeLibs.ToArray ();
 
@@ -260,26 +282,22 @@ namespace Xamarin.Android.Tasks
 
 		bool RunParallelAotCompiler (List<string> nativeLibs)
 		{
-			CancellationTokenSource cts = null;
-
 			try {
-				cts = new CancellationTokenSource ();
-
 				ThreadingTasks.ParallelOptions options = new ThreadingTasks.ParallelOptions {
-					CancellationToken = cts.Token,
+					CancellationToken = Token,
 					TaskScheduler = ThreadingTasks.TaskScheduler.Default,
 				};
 
 				ThreadingTasks.Parallel.ForEach (GetAotConfigs (), options,
 					config => {
 						if (!config.Valid) {
-							cts.Cancel ();
+							Cancel ();
 							return;
 						}
 
-						if (!RunAotCompiler (config.AssembliesPath, config.AotCompiler, config.AotOptions, config.AssemblyPath, cts.Token)) {
+						if (!RunAotCompiler (config.AssembliesPath, config.AotCompiler, config.AotOptions, config.AssemblyPath)) {
 							LogCodedError ("XA3001", "Could not AOT the assembly: {0}", Path.GetFileName (config.AssemblyPath));
-							cts.Cancel ();
+							Cancel ();
 							return;
 						}
 
@@ -289,9 +307,6 @@ namespace Xamarin.Android.Tasks
 				);
 			} catch (OperationCanceledException) {
 				return false;
-			} finally {
-				if (cts != null)
-					cts.Dispose ();
 			}
 
 			return true;
@@ -302,12 +317,7 @@ namespace Xamarin.Android.Tasks
 			if (!Directory.Exists (AotOutputDirectory))
 				Directory.CreateDirectory (AotOutputDirectory);
 
-			// Check that we have a compatible NDK version for the targeted ABIs.
-			NdkUtil.NdkVersion ndkVersion;
-			bool hasNdkVersion = NdkUtil.GetNdkToolchainRelease (AndroidNdkDirectory, out ndkVersion);
-
 			var sdkBinDirectory = MonoAndroidHelper.GetOSBinPath ();
-
 			var abis = SupportedAbis.Split (new char[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
 			foreach (var abi in abis) {
 				string aotCompiler = "";
@@ -316,13 +326,6 @@ namespace Xamarin.Android.Tasks
 				AndroidTargetArch arch;
 
 				switch (abi) {
-				case "armeabi":
-					aotCompiler = Path.Combine (sdkBinDirectory, "cross-arm");
-					outdir = Path.Combine (AotOutputDirectory, "armeabi");
-					mtriple = "armv5-linux-gnueabi";
-					arch = AndroidTargetArch.Arm;
-					break;
-
 				case "armeabi-v7a":
 					aotCompiler = Path.Combine (sdkBinDirectory, "cross-arm");
 					outdir = Path.Combine (AotOutputDirectory, "armeabi-v7a");
@@ -372,23 +375,40 @@ namespace Xamarin.Android.Tasks
 				if (!Directory.Exists (outdir))
 					Directory.CreateDirectory (outdir);
 
-				var toolPrefix = NdkUtil.GetNdkToolPrefix (AndroidNdkDirectory, arch);
+				int level = GetNdkApiLevel (AndroidNdkDirectory, AndroidApiLevel, arch);
+				string toolPrefix = NdkUtil.GetNdkToolPrefix (AndroidNdkDirectory, arch, level);
 				var toolchainPath = toolPrefix.Substring(0, toolPrefix.LastIndexOf(Path.DirectorySeparatorChar));
 				var ldFlags = string.Empty;
 				if (EnableLLVM) {
-					int level = GetNdkApiLevel (AndroidNdkDirectory, AndroidApiLevel, arch);
-
 					string androidLibPath = string.Empty;
 					try {
 						androidLibPath = NdkUtil.GetNdkPlatformLibPath(AndroidNdkDirectory, arch, level);
 					} catch (InvalidOperationException ex) {
 						Diagnostic.Error (5101, ex.Message);
 					}
-					var libs = new List<string>() {
-						GetShortPath (Path.Combine(GetNdkToolchainLibraryDir(toolchainPath), "libgcc.a")),
-						GetShortPath (Path.Combine(androidLibPath, "libc.so")),
-						GetShortPath (Path.Combine(androidLibPath, "libm.so"))
-					};
+
+					string toolchainLibDir;
+					if (NdkUtil.UsingClangNDK)
+						toolchainLibDir = GetNdkToolchainLibraryDir (toolchainPath, arch);
+					else
+						toolchainLibDir = GetNdkToolchainLibraryDir (toolchainPath);
+
+					var libs = new List<string>();
+					if (NdkUtil.UsingClangNDK) {
+						libs.Add ($"-L{GetShortPath (toolchainLibDir)}");
+						libs.Add ($"-L{GetShortPath (androidLibPath)}");
+
+						if (arch == AndroidTargetArch.Arm) {
+							// Needed for -lunwind to work
+							string compilerLibDir = Path.Combine (toolchainPath, "..", "sysroot", "usr", "lib", NdkUtil.GetArchDirName (arch));
+							libs.Add ($"-L{GetShortPath (compilerLibDir)}");
+						}
+					}
+
+					libs.Add (GetShortPath (Path.Combine (toolchainLibDir, "libgcc.a")));
+					libs.Add (GetShortPath (Path.Combine (androidLibPath, "libc.so")));
+					libs.Add (GetShortPath (Path.Combine (androidLibPath, "libm.so")));
+
 					ldFlags = string.Join(";", libs);
 				}
 
@@ -447,7 +467,7 @@ namespace Xamarin.Android.Tasks
 			}
 		}
 			
-		bool RunAotCompiler (string assembliesPath, string aotCompiler, string aotOptions, string assembly, CancellationToken token)
+		bool RunAotCompiler (string assembliesPath, string aotCompiler, string aotOptions, string assembly)
 		{
 			var stdout_completed = new ManualResetEvent (false);
 			var stderr_completed = new ManualResetEvent (false);
@@ -459,6 +479,7 @@ namespace Xamarin.Android.Tasks
 				RedirectStandardError = true,
 				CreateNoWindow=true,
 				WindowStyle=ProcessWindowStyle.Hidden,
+				WorkingDirectory = WorkingDirectory,
 			};
 			
 			// we do not want options to be provided out of band to the cross compilers
@@ -487,7 +508,7 @@ namespace Xamarin.Android.Tasks
 				proc.Start ();
 				proc.BeginOutputReadLine ();
 				proc.BeginErrorReadLine ();
-				token.Register (() => { try { proc.Kill (); } catch (Exception) { } });
+				Token.Register (() => { try { proc.Kill (); } catch (Exception) { } });
 				proc.WaitForExit ();
 				if (psi.RedirectStandardError)
 					stderr_completed.WaitOne (TimeSpan.FromSeconds (30));

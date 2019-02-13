@@ -5,14 +5,18 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Xml;
+using System.Text.RegularExpressions;
 
 namespace Xamarin.Android.Tasks
 {
 	class ManagedResourceParser : ResourceParser
 	{
 		CodeTypeDeclaration resources;
-		CodeTypeDeclaration layout, ids, drawable, strings, colors, dimension, raw, animator, animation, attrib, boolean, font, ints, interpolators, menu, mipmaps, plurals, styleable, style, arrays;
+		CodeTypeDeclaration layout, ids, drawable, strings, colors, dimension, raw, animator, animation, attrib, boolean, font, ints, interpolators, menu, mipmaps, plurals, styleable, style, arrays, xml, transition;
 		Dictionary<string, string> map;
+		bool app;
+		List<CodeTypeDeclaration> declarationIds = new List<CodeTypeDeclaration> ();
+		const string itemPackageId = "0x7f";
 
 		void SortMembers (CodeTypeDeclaration decl)
 		{
@@ -25,9 +29,11 @@ namespace Xamarin.Android.Tasks
 
 		public CodeTypeDeclaration Parse (string resourceDirectory, IEnumerable<string> additionalResourceDirectories, bool isApp, Dictionary<string, string> resourceMap)
 		{
+			app = isApp;
 			if (!Directory.Exists (resourceDirectory))
 				throw new ArgumentException ("Specified resource directory was not found: " + resourceDirectory);
 
+			app = isApp;
 			map = resourceMap ?? new Dictionary<string, string> ();
 			resources = CreateResourceClass ();
 			animation = CreateClass ("Animation");
@@ -50,6 +56,8 @@ namespace Xamarin.Android.Tasks
 			plurals = CreateClass ("Plurals");
 			styleable = CreateClass ("Styleable");
 			style = CreateClass ("Style");
+			transition = CreateClass ("Transition");
+			xml = CreateClass ("Xml");
 
 			// This top most R.txt will contain EVERYTHING we need. including library resources since it represents
 			// the final build.
@@ -96,6 +104,8 @@ namespace Xamarin.Android.Tasks
 			SortMembers (strings);
 			SortMembers (style);
 			SortMembers (styleable);
+			SortMembers (transition);
+			SortMembers (xml);
 
 
 			if (animation.Members.Count > 1)
@@ -104,8 +114,8 @@ namespace Xamarin.Android.Tasks
 				resources.Members.Add (animator);
 			if (arrays.Members.Count > 1)
 				resources.Members.Add (arrays);
-			if (attrib.Members.Count > 1)
-				resources.Members.Add (attrib);
+			//NOTE: aapt always emits Resource.Attribute, so we are replicating that
+			resources.Members.Add (attrib);
 			if (boolean.Members.Count > 1)
 				resources.Members.Add (boolean);
 			if (colors.Members.Count > 1)
@@ -138,6 +148,10 @@ namespace Xamarin.Android.Tasks
 				resources.Members.Add (style);
 			if (styleable.Members.Count > 1)
 				resources.Members.Add (styleable);
+			if (transition.Members.Count > 1)
+				resources.Members.Add (transition);
+			if (xml.Members.Count > 1)
+				resources.Members.Add (xml);
 
 			return resources;
 		}
@@ -147,7 +161,7 @@ namespace Xamarin.Android.Tasks
 			var lines = System.IO.File.ReadLines (file);
 			foreach (var line in lines) {
 				var items = line.Split (new char [] { ' ' }, 4);
-				int value = items[0] != "int[]" ? Convert.ToInt32 (items [3], 16) : 0;
+				int value = items [0] != "int[]" ? Convert.ToInt32 (items [3], 16) : 0;
 				string itemName = items [2];
 				switch (items [1]) {
 				case "anim":
@@ -158,6 +172,9 @@ namespace Xamarin.Android.Tasks
 					break;
 				case "attr":
 					CreateIntField (attrib, itemName, value);
+					break;
+				case "array":
+					CreateIntField (arrays, itemName, value);
 					break;
 				case "bool":
 					CreateIntField (boolean, itemName, value);
@@ -195,6 +212,9 @@ namespace Xamarin.Android.Tasks
 				case "plurals":
 					CreateIntField (plurals, itemName, value);
 					break;
+				case "raw":
+					CreateIntField (raw, itemName, value);
+					break;
 				case "string":
 					CreateIntField (strings, itemName, value);
 					break;
@@ -215,6 +235,12 @@ namespace Xamarin.Android.Tasks
 						break;
 					}
 					break;
+				case "transition":
+					CreateIntField (transition, itemName, value);
+					break;
+				case "xml":
+					CreateIntField (xml, itemName, value);
+					break;
 				}
 			}
 		}
@@ -233,7 +259,11 @@ namespace Xamarin.Android.Tasks
 			case ".axml":
 				if (string.Compare (path, "raw", StringComparison.OrdinalIgnoreCase) == 0)
 					goto default;
-				ProcessXmlFile (file);
+				try {
+					ProcessXmlFile (file);
+				} catch (XmlException ex) {
+					Log.LogCodedWarning ("XA1000", $"There was an problem parsing {file}. This is likely due to incomplete or invalid xml. Exception: {ex}");
+				}
 				break;
 			default:
 				break;
@@ -274,22 +304,35 @@ namespace Xamarin.Android.Tasks
 		{
 			var f = new CodeMemberField (type, name) {
 				// pity I can't make the member readonly...
-				Attributes = MemberAttributes.Public | MemberAttributes.Static,
+				Attributes = app ? MemberAttributes.Const | MemberAttributes.Public : MemberAttributes.Static | MemberAttributes.Public,
 			};
 			parentType.Members.Add (f);
+		}
+
+		int CreateResourceId (CodeTypeDeclaration parentType)
+		{
+			
+			int typeid = declarationIds.IndexOf (parentType) + 1;
+			if (typeid == 0) {
+				declarationIds.Add (parentType);
+				typeid = declarationIds.Count;
+			}
+			int itemid = parentType.Members.Count + 1;
+			return Convert.ToInt32(itemPackageId + typeid.ToString ().PadLeft (2, '0') + itemid.ToString ().PadLeft (4, '0'), 16); 
 		}
 
 		void CreateIntField (CodeTypeDeclaration parentType, string name, int value = 0)
 		{
 			string mappedName = GetResourceName (parentType.Name, name, map);
-			if (parentType.Members.OfType<CodeTypeMember> ().Any (x => string.Compare (x.Name, mappedName, StringComparison.OrdinalIgnoreCase) == 0))
+			if (parentType.Members.OfType<CodeTypeMember> ().Any (x => string.Compare (x.Name, mappedName, StringComparison.Ordinal) == 0))
 				return;
+			int id = value == 0 ? CreateResourceId (parentType): value;
 			var f = new CodeMemberField (typeof (int), mappedName) {
 				// pity I can't make the member readonly...
-				Attributes = MemberAttributes.Static | MemberAttributes.Public,
-				InitExpression = new CodePrimitiveExpression (value),
+				Attributes = app ? MemberAttributes.Const | MemberAttributes.Public : MemberAttributes.Static | MemberAttributes.Public,
+				InitExpression = new CodePrimitiveExpression (id),
 				Comments = {
-						new CodeCommentStatement ($"aapt resource value: {value}"),
+						new CodeCommentStatement ($"aapt resource value: 0x{id.ToString("X")}"),
 					},
 			};
 			parentType.Members.Add (f);
@@ -298,11 +341,11 @@ namespace Xamarin.Android.Tasks
 		void CreateIntArrayField (CodeTypeDeclaration parentType, string name, int count, params int[] values)
 		{
 			string mappedName = GetResourceName (parentType.Name, name, map);
-			if (parentType.Members.OfType<CodeTypeMember> ().Any (x => string.Compare (x.Name, mappedName, StringComparison.OrdinalIgnoreCase) == 0))
+			if (parentType.Members.OfType<CodeTypeMember> ().Any (x => string.Compare (x.Name, mappedName, StringComparison.Ordinal) == 0))
 				return;
 			var f = new CodeMemberField (typeof (int []), name) {
 				// pity I can't make the member readonly...
-				Attributes = MemberAttributes.Public | MemberAttributes.Static,
+				Attributes = MemberAttributes.Static | MemberAttributes.Public,
 			};
 			CodeArrayCreateExpression c = (CodeArrayCreateExpression)f.InitExpression;
 			if (c == null) {
@@ -344,6 +387,8 @@ namespace Xamarin.Android.Tasks
 				CreateIntField (drawable, fieldName);
 				break;
 			case "dimen":
+				CreateIntField (dimension, fieldName);
+				break;
 			case "font":
 				CreateIntField (font, fieldName);
 				break;
@@ -396,6 +441,12 @@ namespace Xamarin.Android.Tasks
 				break;
 			case "style":
 				CreateIntField (style, fieldName.Replace (".", "_"));
+				break;
+			case "transition":
+				CreateIntField (transition, fieldName);
+				break;
+			case "xml":
+				CreateIntField (xml, fieldName);
 				break;
 			default:
 				break;

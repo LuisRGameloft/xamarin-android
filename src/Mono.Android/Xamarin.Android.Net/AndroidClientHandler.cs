@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
+using Android.OS;
 using Android.Runtime;
 using Java.IO;
 using Java.Net;
@@ -70,6 +71,10 @@ namespace Xamarin.Android.Net
 		const string GZIP_ENCODING = "gzip";
 		const string DEFLATE_ENCODING = "deflate";
 		const string IDENTITY_ENCODING = "identity";
+
+		static readonly IDictionary<string, string> headerSeparators = new Dictionary<string, string> {
+			["User-Agent"] = " ",
+		};
 
 		static readonly HashSet <string> known_content_headers = new HashSet <string> (StringComparer.OrdinalIgnoreCase) {
 			"Allow",
@@ -255,7 +260,7 @@ namespace Xamarin.Android.Net
 				URL java_url = new URL (EncodeUrl (redirectState.NewUrl));
 				URLConnection java_connection;
 				if (UseProxy)
-					java_connection = java_url.OpenConnection ();
+					java_connection = java_url.OpenConnection (await GetJavaProxy (redirectState.NewUrl, cancellationToken));
 				else
 					java_connection = java_url.OpenConnection (Java.Net.Proxy.NoProxy);
 
@@ -282,7 +287,30 @@ namespace Xamarin.Android.Net
 				request.Method = redirectState.Method;
 			}
 		}
-		
+
+		protected virtual async Task <Java.Net.Proxy> GetJavaProxy (Uri destination, CancellationToken cancellationToken)
+		{
+			Java.Net.Proxy proxy = Java.Net.Proxy.NoProxy;
+
+			if (destination == null || Proxy == null) {
+				goto done;
+			}
+
+			Uri puri = Proxy.GetProxy (destination);
+			if (puri == null) {
+				goto done;
+			}
+
+			proxy = await Task <Java.Net.Proxy>.Run (() => {
+				// Let the Java code resolve the address, if necessary
+				var addr = new Java.Net.InetSocketAddress (puri.Host, puri.Port);
+				return new Java.Net.Proxy (Java.Net.Proxy.Type.Http, addr);
+			}, cancellationToken);
+
+		  done:
+			return proxy;
+		}
+
 		Task <HttpResponseMessage> ProcessRequest (HttpRequestMessage request, URL javaUrl, HttpURLConnection httpConnection, CancellationToken cancellationToken, RequestRedirectionState redirectState)
 		{
 			cancellationToken.ThrowIfCancellationRequested ();
@@ -302,7 +330,9 @@ namespace Xamarin.Android.Net
 		{
 			return Task.Run (() => {
 				try {
-					using (ct.Register (() => httpConnection?.Disconnect ()))
+					using (ct.Register(() => DisconnectAsync(httpConnection).ContinueWith(t => {
+							if (t.Exception != null) Logger.Log(LogLevel.Info, LOG_APP, $"Disconnection exception: {t.Exception}");
+						}, TaskScheduler.Default)))
 						httpConnection?.Connect ();
 				} catch {
 					ct.ThrowIfCancellationRequested ();
@@ -447,6 +477,9 @@ namespace Xamarin.Android.Net
 					ParseCookies (ret, connectionUri);
 				}
 
+				// We don't want to pass the authorization header onto the next location
+				request.Headers.Authorization = null;
+
 				return ret;
 			}
 
@@ -550,29 +583,80 @@ namespace Xamarin.Android.Net
 
 			IDictionary <string, IList <string>> headers = httpConnection.HeaderFields;
 			IList <string> locationHeader;
-			if (!headers.TryGetValue ("Location", out locationHeader) || locationHeader == null || locationHeader.Count == 0) {
+			string location = null;
+
+			if (headers.TryGetValue ("Location", out locationHeader) && locationHeader != null && locationHeader.Count > 0) {
+				if (locationHeader.Count == 1) {
+					location = locationHeader [0]?.Trim ();
+				} else {
+					if (Logger.LogNet)
+						Logger.Log (LogLevel.Info, LOG_APP, $"More than one location header for HTTP {redirectCode} redirect. Will use the first non-empty one.");
+
+					foreach (string l in locationHeader) {
+						location = l?.Trim ();
+						if (!String.IsNullOrEmpty (location))
+							break;
+					}
+				}
+			}
+
+			if (String.IsNullOrEmpty (location)) {
 				// As per https://tools.ietf.org/html/rfc7231#section-6.4.1 the reponse isn't required to contain the Location header and the
 				// client should act accordingly. Since it is not documented what the action in this case should be, we're following what
 				// Xamarin.iOS does and simply return the content of the request as if it wasn't a redirect.
+				// It is not clear what to do if there is a Location header but its value is empty, so
+				// we assume the same action here.
 				disposeRet = false;
 				return true;
 			}
-
-			if (locationHeader.Count > 1 && Logger.LogNet)
-				Logger.Log (LogLevel.Info, LOG_APP, $"More than one location header for HTTP {redirectCode} redirect. Will use the first one.");
 
 			redirectState.RedirectCounter++;
 			if (redirectState.RedirectCounter >= MaxAutomaticRedirections)
 				throw new WebException ($"Maximum automatic redirections exceeded (allowed {MaxAutomaticRedirections}, redirected {redirectState.RedirectCounter} times)");
 
-			string redirectUrl = locationHeader [0];
-			string protocol = httpConnection.URL?.Protocol;
-			if (redirectUrl.StartsWith ("//", StringComparison.Ordinal)) {
-				// When redirecting to an URL without protocol, we use the protocol of previous request
-				// See https://tools.ietf.org/html/rfc3986#section-5 (example in section 5.4)
-				redirectUrl = protocol + ":" + redirectUrl;
+			Uri redirectUrl;
+			try {
+				if (Logger.LogNet)
+					Logger.Log (LogLevel.Debug, LOG_APP, $"Raw redirect location: {location}");
+
+				var baseUrl = new Uri (httpConnection.URL.ToString ());
+				if (location [0] == '/') {
+					// Shortcut for the '/' and '//' cases, simplifies logic since URI won't treat
+					// such URLs as relative and we'd have to work around it in the `else` block
+					// below.
+					redirectUrl = new Uri (baseUrl, location);
+				} else {
+					// Special case (from https://tools.ietf.org/html/rfc3986#section-5.4.1) not
+					// handled by the Uri class: scheme:host
+					//
+					// This is a valid URI (should be treated as `scheme://host`) but URI throws an
+					// exception about DOS path being malformed IF the part before colon is just one
+					// character long... We could replace the scheme with the original request's one, but
+					// that would NOT be the right thing to do since it is not what the redirecting server
+					// meant. The fix doesn't belong here, but rather in the Uri class. So we'll throw...
+
+					redirectUrl = new Uri (location, UriKind.RelativeOrAbsolute);
+					if (!redirectUrl.IsAbsoluteUri)
+						redirectUrl = new Uri (baseUrl, location);
+				}
+
+				if (Logger.LogNet)
+					Logger.Log (LogLevel.Debug, LOG_APP, $"Cooked redirect location: {redirectUrl}");
+			} catch (Exception ex) {
+				throw new WebException ($"Invalid redirect URI received: {location}", ex);
 			}
-			redirectState.NewUrl = new Uri (redirectUrl, UriKind.Absolute);
+
+			UriBuilder builder = null;
+			if (!String.IsNullOrEmpty (httpConnection.URL.Ref) && String.IsNullOrEmpty (redirectUrl.Fragment)) {
+				if (Logger.LogNet)
+					Logger.Log (LogLevel.Debug, LOG_APP, $"Appending fragment '{httpConnection.URL.Ref}' to redirect URL '{redirectUrl}'");
+
+				builder = new UriBuilder (redirectUrl) {
+					Fragment = httpConnection.URL.Ref
+				};
+			}
+
+			redirectState.NewUrl = builder == null ? redirectUrl : builder.Uri;
 			if (Logger.LogNet)
 				Logger.Log (LogLevel.Debug, LOG_APP, $"Request redirected to {redirectState.NewUrl}");
 
@@ -801,6 +885,13 @@ namespace Xamarin.Android.Net
 				return;
 			}
 
+			// Context: https://github.com/xamarin/xamarin-android/issues/1615
+			int apiLevel = (int)Build.VERSION.SdkInt;
+			if (apiLevel >= 16 && apiLevel <= 20) {
+				httpsConnection.SSLSocketFactory = new OldAndroidSSLSocketFactory ();
+				return;
+			}
+
 			KeyStore keyStore = KeyStore.GetInstance (KeyStore.DefaultType);
 			keyStore.Load (null, null);
 			bool gotCerts = TrustedCerts?.Count > 0;
@@ -866,13 +957,15 @@ namespace Xamarin.Android.Net
 			httpConnection.SetRequestProperty (data.UseProxyAuthentication ? "Proxy-Authorization" : "Authorization", authorization.Message);
 		}
 
+		static string GetHeaderSeparator (string name) => headerSeparators.TryGetValue (name, out var value) ? value : ",";
+
 		void AddHeaders (HttpURLConnection conn, HttpHeaders headers)
 		{
 			if (headers == null)
 				return;
 
 			foreach (KeyValuePair<string, IEnumerable<string>> header in headers) {
-				conn.SetRequestProperty (header.Key, header.Value != null ? String.Join (",", header.Value) : String.Empty);
+				conn.SetRequestProperty (header.Key, header.Value != null ? String.Join (GetHeaderSeparator (header.Key), header.Value) : String.Empty);
 			}
 		}
 		

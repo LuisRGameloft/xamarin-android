@@ -84,7 +84,9 @@ namespace Xamarin.Android.Tasks {
 		public string SdkDir { get; set; }
 		public string SdkVersion { get; set; }
 		public bool Debug { get; set; }
+		public bool MultiDex { get; set; }
 		public bool NeedsInternet { get; set; }
+		public bool InstantRunEnabled { get; set; }
 		public string VersionCode {
 			get {
 				XAttribute attr = doc.Root.Attribute (androidNs + "versionCode");
@@ -166,6 +168,16 @@ namespace Xamarin.Android.Tasks {
 				app.AddBeforeSelf (e);
 			}
 			elements = app.ElementsAfterSelf ("permissionTree");
+			foreach (var e in elements) {
+				e.Remove ();
+				app.AddBeforeSelf (e);
+			}
+			elements = app.ElementsAfterSelf ("permission-group");
+			foreach (var e in elements) {
+				e.Remove ();
+				app.AddBeforeSelf (e);
+			}
+			elements = app.ElementsAfterSelf ("permission-tree");
 			foreach (var e in elements) {
 				e.Remove ();
 				app.AddBeforeSelf (e);
@@ -253,8 +265,8 @@ namespace Xamarin.Android.Tasks {
 			if (uses.Attribute (androidNs + "minSdkVersion") == null) {
 				int minSdkVersion;
 				if (!int.TryParse (SdkVersionName, out minSdkVersion))
-					minSdkVersion = 11;
-				minSdkVersion = Math.Min (minSdkVersion, 11);
+					minSdkVersion = XABuildConfig.NDKMinimumApiAvailable;
+				minSdkVersion = Math.Min (minSdkVersion, XABuildConfig.NDKMinimumApiAvailable);
 				uses.SetAttributeValue (androidNs + "minSdkVersion", minSdkVersion.ToString ());
 			}
 
@@ -343,8 +355,15 @@ namespace Xamarin.Android.Tasks {
 			
 			manifest.SetAttributeValue ("package", PackageName);
 
+			if (MultiDex)
+				app.Add (CreateMonoRuntimeProvider ("mono.android.MultiDexLoader", null, initOrder: --AppInitOrder));
+
 			var providerNames = AddMonoRuntimeProviders (app);
 
+			if (Debug && !embed && InstantRunEnabled) {
+				if (int.TryParse (SdkVersion, out int apiLevel) && apiLevel >= 19)
+					app.Add (CreateMonoRuntimeProvider ("mono.android.ResourcePatcher", null, initOrder: --AppInitOrder));
+			}
 			if (Debug) {
 				app.Add (new XComment ("suppress ExportedReceiver"));
 				app.Add (new XElement ("receiver",
@@ -390,7 +409,7 @@ namespace Xamarin.Android.Tasks {
 					try {
 						MergeLibraryManifest (mergedManifest);
 					} catch (Exception ex) {
-						log.LogWarningFromException (ex);
+						log.LogCodedWarning ("XA4302", "Unhandled exception merging `AndroidManifest.xml`: {0}", ex);
 					}
 				}
 			}
@@ -431,7 +450,7 @@ namespace Xamarin.Android.Tasks {
 			foreach (var top in xdoc.XPathSelectElements ("/manifest/*")) {
 				var name = top.Attribute (AndroidXmlNamespace.GetName ("name"));
 				var existing = (name != null) ?
-					doc.XPathSelectElement (string.Format ("/manifest/{0}[@android:name='{1}']", top.Name.LocalName, XmlConvert.VerifyNCName (name.Value)), nsResolver) :
+					doc.XPathSelectElement (string.Format ("/manifest/{0}[@android:name='{1}']", top.Name.LocalName, name.Value), nsResolver) :
 					doc.XPathSelectElement (string.Format ("/manifest/{0}", top.Name.LocalName));
 				if (existing != null)
 					// if there is existing node with the same android:name, then append contents to existing node.
@@ -573,7 +592,7 @@ namespace Xamarin.Android.Tasks {
 
 		IList<string> AddMonoRuntimeProviders (XElement app)
 		{
-			app.Add (CreateMonoRuntimeProvider ("mono.MonoRuntimeProvider", null));
+			app.Add (CreateMonoRuntimeProvider ("mono.MonoRuntimeProvider", null, --AppInitOrder));
 
 			var providerNames = new List<string> ();
 
@@ -599,7 +618,7 @@ namespace Xamarin.Android.Tasks {
 				case "service":
 					string providerName = "MonoRuntimeProvider_" + procs.Count;
 					providerNames.Add (providerName);
-					app.Add (CreateMonoRuntimeProvider ("mono." + providerName, proc.Value));
+					app.Add (CreateMonoRuntimeProvider ("mono." + providerName, proc.Value, --AppInitOrder));
 					break;
 				}
 			}
@@ -607,12 +626,16 @@ namespace Xamarin.Android.Tasks {
 			return providerNames;
 		}
 
-		XElement CreateMonoRuntimeProvider (string name, string processName)
+		int AppInitOrder = 2000000000;
+
+		XElement CreateMonoRuntimeProvider (string name, string processName, int initOrder)
 		{
+			var directBootAware = DirectBootAware ();
 			return new XElement ("provider",
 						new XAttribute (androidNs + "name", name),
 						new XAttribute (androidNs + "exported", "false"),
-						new XAttribute (androidNs + "initOrder", int.MaxValue.ToString ()),
+						new XAttribute (androidNs + "initOrder", initOrder),
+						directBootAware ? new XAttribute (androidNs + "directBootAware", "true") : null,
 						processName == null ? null : new XAttribute (androidNs + "process", processName),
 						new XAttribute (androidNs + "authorities", PackageName + "." + name + ".__mono_init__"));
 		}
@@ -621,6 +644,40 @@ namespace Xamarin.Android.Tasks {
 		{
 			return LauncherIntentElements.All (entry => 
 					intentFilter.Elements (entry.Key).Any (e => ((string) e.Attribute (attName) == entry.Value)));
+		}
+
+		/// <summary>
+		/// Returns the value of //application/@android:extractNativeLibs.
+		/// </summary>
+		public bool ExtractNativeLibraries ()
+		{
+			string text = app?.Attribute (androidNs + "extractNativeLibs")?.Value;
+			if (bool.TryParse (text, out bool value)) {
+				return value;
+			}
+
+			// If android:extractNativeLibs is omitted, returns true.
+			return true;
+		}
+
+		/// <summary>
+		/// Returns true if an element has the @android:directBootAware attribute and its 'true'
+		/// </summary>
+		public bool DirectBootAware ()
+		{
+			var processAttrName = androidNs.GetName ("directBootAware");
+			var appAttr = app.Attribute (processAttrName);
+			bool value;
+			if (appAttr != null && bool.TryParse (appAttr.Value, out value) && value)
+				return true;
+			foreach (XElement el in app.Elements ()) {
+				var elAttr = el.Attribute (processAttrName);
+				if (elAttr != null && bool.TryParse (elAttr.Value, out value) && value)
+					return true;
+			}
+
+			// If android:directBootAware is omitted, returns false.
+			return false;
 		}
 
 		XElement ActivityFromTypeDefinition (TypeDefinition type, string name, int targetSdkVersion)
@@ -685,12 +742,15 @@ namespace Xamarin.Android.Tasks {
 
 			IEnumerable<MetaDataAttribute> metadata = MetaDataAttribute.FromCustomAttributeProvider (type);
 			IEnumerable<GrantUriPermissionAttribute> grants = GrantUriPermissionAttribute.FromTypeDefinition (type);
+			IEnumerable<IntentFilterAttribute> intents = IntentFilterAttribute.FromTypeDefinition (type);
 
 			XElement element = attr.ToElement (PackageName);
 			if (element.Attribute (attName) == null)
 				element.Add (new XAttribute (attName, name));
 			element.Add (metadata.Select (md => md.ToElement (PackageName)));
 			element.Add (grants.Select (intent => intent.ToElement (PackageName)));
+			element.Add (intents.Select (intent => intent.ToElement (PackageName)));
+
 			return element;
 		}
 
@@ -904,7 +964,13 @@ namespace Xamarin.Android.Tasks {
 		
 		public void Save (string filename)
 		{
-			using (var file = new StreamWriter (filename, false, new UTF8Encoding (false)))
+			using (var file = new StreamWriter (filename, append: false, encoding: new UTF8Encoding (false)))
+				Save (file);
+		}
+
+		public void Save (Stream stream)
+		{
+			using (var file = new StreamWriter (stream, new UTF8Encoding (false), bufferSize: 1024, leaveOpen: true))
 				Save (file);
 		}
 
@@ -946,8 +1012,6 @@ namespace Xamarin.Android.Tasks {
 		static int GetAbiCode (string abi)
 		{
 			switch (abi) {
-			case "armeabi":
-				return 1;
 			case "armeabi-v7a":
 				return 2;
 			case "x86":

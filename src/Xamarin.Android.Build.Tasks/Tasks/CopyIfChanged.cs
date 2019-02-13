@@ -1,6 +1,7 @@
 ﻿// Copyright (C) 2011 Xamarin, Inc. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using Microsoft.Build.Framework;
@@ -9,7 +10,7 @@ using System.Security.Cryptography;
 
 namespace Xamarin.Android.Tasks
 {
-	// When we regenerate the Resource.Designer.cs, if we write it
+	// When we regenerate the Resource.designer.cs, if we write it
 	// when it hasn't actually changed, the user will get a "Reload?"
 	// prompt in IDEs, so we only want to copy the file if there is
 	// an actual change.
@@ -21,7 +22,10 @@ namespace Xamarin.Android.Tasks
 		[Required]
 		public ITaskItem[] DestinationFiles { get; set; }
 
-		public bool KeepDestinationDates { get; set; }
+		[Output]
+		public ITaskItem[] ModifiedFiles { get; set; }
+
+		private List<ITaskItem> modifiedFiles = new List<ITaskItem>();
 
 		public override bool Execute ()
 		{
@@ -37,13 +41,24 @@ namespace Xamarin.Android.Tasks
 				if (!File.Exists (src))
 					continue;
 				var dest = DestinationFiles [i].ItemSpec;
-				var lastWriteTime = File.GetLastWriteTimeUtc (File.Exists (dest) ? dest : src);
-				MonoAndroidHelper.SetWriteable (dest);
-				if (!MonoAndroidHelper.CopyIfChanged (src, dest))
+				var srcmodifiedDate = File.GetLastWriteTimeUtc (src);
+				var dstmodifiedDate = File.Exists (dest) ? File.GetLastWriteTimeUtc (dest) : srcmodifiedDate;
+				if (dstmodifiedDate > srcmodifiedDate) {
+					Log.LogDebugMessage ($"  Skipping {src} its up to date");
 					continue;
-				if (KeepDestinationDates)
-					MonoAndroidHelper.SetLastAccessAndWriteTimeUtc (dest, lastWriteTime, Log);
+				}
+				if (!MonoAndroidHelper.CopyIfChanged (src, dest)) {
+					Log.LogDebugMessage ($"  Skipping {src} it was not changed.");
+					MonoAndroidHelper.SetWriteable (dest);
+					continue;
+				}
+				modifiedFiles.Add (new TaskItem (dest));
 			}
+
+			ModifiedFiles = modifiedFiles.ToArray ();
+
+			Log.LogDebugTaskItems (" ModifiedFiles:", ModifiedFiles);
+
 			return true;
 		}
 	}

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using System.Xml.XPath;
@@ -9,32 +11,33 @@ using System.Xml.XPath;
 namespace Monodroid {
 	static class AndroidResource {
 		
-		public static void UpdateXmlResource (string res, string filename, Dictionary<string, string> acwMap, IEnumerable<string> additionalDirectories = null)
+		public static bool UpdateXmlResource (string res, string filename, Dictionary<string, string> acwMap, IEnumerable<string> additionalDirectories = null, Action<TraceLevel, string> logMessage = null, Action<string, string> registerCustomView = null)
 		{
 			// use a temporary file so we only update the real file if things actually changed
 			string tmpfile = filename + ".bk";
 			try {
 				XDocument doc = XDocument.Load (filename, LoadOptions.SetLineInfo);
-
-				UpdateXmlResource (res, doc.Root, acwMap, additionalDirectories);
+				UpdateXmlResource (res, doc.Root, acwMap, additionalDirectories, logMessage, (e) => {
+					registerCustomView?.Invoke (e, filename);
+				});
 				using (var stream = File.OpenWrite (tmpfile))
 					using (var xw = new LinePreservedXmlWriter (new StreamWriter (stream)))
 						xw.WriteNode (doc.CreateNavigator (), false);
-				Xamarin.Android.Tasks.MonoAndroidHelper.CopyIfChanged (tmpfile, filename);
-				File.Delete (tmpfile);
-			}
-			catch (Exception e) {
+
+				return Xamarin.Android.Tasks.MonoAndroidHelper.CopyIfChanged (tmpfile, filename);
+			} catch (Exception e) {
+				logMessage?.Invoke (TraceLevel.Warning, $"AndroidResgen: Warning while updating Resource XML '{filename}': {e.Message}");
+				return false;
+			} finally {
 				if (File.Exists (tmpfile)) {
 					File.Delete (tmpfile);
 				}
-				Console.Error.WriteLine ("AndroidResgen: Warning while updating Resource XML '{0}': {1}", filename, e.Message);
-				return;
 			}
 		}
 
 		static readonly XNamespace android = "http://schemas.android.com/apk/res/android";
 		static readonly XNamespace res_auto = "http://schemas.android.com/apk/res-auto";
-		static readonly Regex r = new Regex (@"^@\+?(?<package>[^:]+:)?(anim|color|drawable|layout|menu)/(?<file>.*)$");
+		static readonly Regex r = new Regex (@"^@\+?(?<package>[^:]+:)?(anim|color|drawable|layout|menu)/(?<file>.*)$", RegexOptions.Compiled);
 		static readonly string[] fixResourcesAliasPaths = {
 			"/resources/item",
 			"/resources/integer-array/item",
@@ -52,17 +55,17 @@ namespace Monodroid {
 			UpdateXmlResource (null, e, acwMap);
 		}
 
-		static IEnumerable<T> Prepend<T> (this IEnumerable<T> l, T another) where T : XNode
+		internal static IEnumerable<T> Prepend<T> (this IEnumerable<T> l, T another) where T : XNode
 		{
 			yield return another;
 			foreach (var e in l)
 				yield return e;
 		}
 		
-		static void UpdateXmlResource (string resourcesBasePath, XElement e, Dictionary<string, string> acwMap, IEnumerable<string> additionalDirectories = null)
+		static void UpdateXmlResource (string resourcesBasePath, XElement e, Dictionary<string, string> acwMap, IEnumerable<string> additionalDirectories = null, Action<TraceLevel, string> logMessage = null, Action<string> registerCustomView = null)
 		{
 			foreach (var elem in GetElements (e).Prepend (e)) {
-				TryFixCustomView (elem, acwMap);
+				registerCustomView?.Invoke (elem.Name.ToString ());
 			}
 
 			foreach (var path in fixResourcesAliasPaths) {
@@ -75,14 +78,12 @@ namespace Monodroid {
 				if (a.IsNamespaceDeclaration)
 					continue;
 
-				if (TryFixFragment (a, acwMap))
-					continue;
+				TryFixFragment (a, acwMap, registerCustomView);
 				
 				if (TryFixResAuto (a, acwMap))
 					continue;
 
-				if (TryFixCustomClassAttribute (a, acwMap))
-					continue;
+				TryFixCustomClassAttribute (a, acwMap, registerCustomView);
 
 				if (a.Name.Namespace != android &&
 						!(a.Name.LocalName == "layout" && a.Name.Namespace == XNamespace.None &&
@@ -103,13 +104,13 @@ namespace Monodroid {
 			// Might be a bit of an overkill, but the data comes (indirectly) from the user since it's the
 			// path to the msbuild's intermediate output directory and that location can be changed by the
 			// user. It's better to be safe than sorry.
-			resourceBasePath = (resourceBasePath ?? String.Empty).Trim ();
-			if (String.IsNullOrEmpty (resourceBasePath))
+			resourceBasePath = resourceBasePath?.Trim ();
+			if (string.IsNullOrEmpty (resourceBasePath))
 				return true;
 
 			// Avoid resource names that are all whitespace
-			value = (value ?? String.Empty).Trim ();
-			if (String.IsNullOrEmpty (value))
+			value = value?.Trim ();
+			if (string.IsNullOrEmpty (value))
 				return false; // let's save some time
 			if (value.Length < 4 || value [0] != '@') // 4 is the minimum length since we need a string
 								  // that is at least of the following
@@ -117,30 +118,37 @@ namespace Monodroid {
 								  // below.
 				return true;
 
-			string filePath = null;
 			int slash = value.IndexOf ('/');
 			int colon = value.IndexOf (':');
 			if (colon == -1)
 				colon = 0;
 
 			// Determine the the potential definition file's path based on the resource type.
-			string dirPrefix = value.Substring (colon + 1, slash - colon - 1).ToLowerInvariant ();
+			string dirPattern = value.Substring (colon + 1, slash - colon - 1).ToLowerInvariant () + "*";
 			string fileNamePattern = value.Substring (slash + 1).ToLowerInvariant () + ".*";
 			
-			if (Directory.EnumerateDirectories (resourceBasePath, dirPrefix + "*").Any (dir => Directory.EnumerateFiles (dir, fileNamePattern).Any ()))
-				return true;
+			foreach (var dir in Directory.EnumerateDirectories (resourceBasePath, dirPattern)) {
+				foreach (var file in Directory.EnumerateFiles (dir, fileNamePattern)) {
+					return true;
+				}
+			}
 
 			// check additional directories if we have them incase the resource is in a library project
-			if (additionalDirectories != null)
-				foreach (var additionalDirectory in additionalDirectories)
-					if (Directory.EnumerateDirectories (additionalDirectory, dirPrefix + "*").Any (dir => Directory.EnumerateFiles (dir, fileNamePattern).Any ()))
-						return true;
+			if (additionalDirectories != null) {
+				foreach (var additionalDirectory in additionalDirectories) {
+					foreach (var dir in Directory.EnumerateDirectories (additionalDirectory, dirPattern)) {
+						foreach (var file in Directory.EnumerateFiles (dir, fileNamePattern)) {
+							return true;
+						}
+					}
+				}
+			}
 
 			// No need to change the reference case.
 			return false;
 		}
 		
-		static IEnumerable<XAttribute> GetAttributes (XElement e)
+		internal static IEnumerable<XAttribute> GetAttributes (XElement e)
 		{
 			foreach (XAttribute a in e.Attributes ())
 				yield return a;
@@ -149,7 +157,7 @@ namespace Monodroid {
 					yield return a;
 		}
 
-		static IEnumerable<XElement> GetElements (XElement e)
+		internal static IEnumerable<XElement> GetElements (XElement e)
 		{
 			foreach (var a in e.Elements ()) {
 				yield return a;
@@ -174,33 +182,26 @@ namespace Monodroid {
 			}
 		}
 
-		private static bool TryFixFragment (XAttribute attr, Dictionary<string, string> acwMap)
+		private static void TryFixFragment (XAttribute attr, Dictionary<string, string> acwMap, Action<string> registerCustomView = null)
 		{
 			// Looks for any: 
 			//   <fragment class="My.DotNet.Class" 
 			//   <fragment android:name="My.DotNet.Class" ...
 			// and tries to change it to the ACW name
 			if (attr.Parent.Name != "fragment")
-				return false;
+				return;
 
 			if (attr.Name == "class" || attr.Name == android + "name") {
-				if (acwMap.ContainsKey (attr.Value)) {
-					attr.Value = acwMap[attr.Value];
-
-					return true;
-				}
-				else if (attr.Value?.Contains (',') ?? false) {
+				var n = attr.Value;
+				if (n == null)
+					return;
+				if (n.Contains (',')) {
 					// attr.Value could be an assembly-qualified name that isn't in acw-map.txt;
 					// see e5b1c92c, https://github.com/xamarin/xamarin-android/issues/1296#issuecomment-365091948
-					var n = attr.Value.Substring (0, attr.Value.IndexOf (','));
-					if (acwMap.ContainsKey (n)) {
-						attr.Value = acwMap [n];
-						return true;
-					}
+					n = attr.Value.Substring (0, attr.Value.IndexOf (','));
 				}
+				registerCustomView?.Invoke (n);
 			}
-
-			return false;
 		}
 
 		private static bool TryFixResAuto (XAttribute attr, Dictionary<string, string> acwMap)
@@ -217,33 +218,16 @@ namespace Monodroid {
 			return false;
 		}
 
-		private static bool TryFixCustomView (XElement elem, Dictionary<string, string> acwMap)
-		{
-			// Looks for any <My.DotNet.Class ...
-			// and tries to change it to the ACW name
-			if (acwMap.ContainsKey (elem.Name.ToString ())) {
-				elem.Name = acwMap[elem.Name.ToString ()];
-				return true;
-			}
-
-			return false;
-		}
-
-		private static bool TryFixCustomClassAttribute (XAttribute attr, Dictionary<string, string> acwMap)
+		private static void TryFixCustomClassAttribute (XAttribute attr, Dictionary<string, string> acwMap, Action<string> registerCustomView = null)
 		{
 			/* Some attributes reference a Java class name.
 			 * try to convert those like for TryFixCustomView
 			 */
 			if (attr.Name != (res_auto + "layout_behavior")                              // For custom CoordinatorLayout behavior
 			    && (attr.Parent.Name != "transition" || attr.Name.LocalName != "class")) // For custom transitions
-				return false;
+				return;
 
-			string mappedValue;
-			if (!acwMap.TryGetValue (attr.Value, out mappedValue))
-				return false;
-
-			attr.Value = mappedValue;
-			return true;
+			registerCustomView?.Invoke (attr.Value);
 		}
 
 		private static string TryLowercaseValue (string value, string resourceBasePath, IEnumerable<string> additionalDirectories)

@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 
 using Xamarin.Tools.Zip;
 using System.Collections.Generic;
+using System.Text;
 #if MSBUILD
 using Microsoft.Build.Utilities;
 using Xamarin.Android.Tasks;
@@ -61,11 +62,52 @@ namespace Xamarin.Android.Tools {
 
 				if (!Directory.Exists (source)) {
 					File.Copy (source, destination, true);
+					MonoAndroidHelper.SetWriteable (destination);
+					File.SetLastWriteTimeUtc (destination, DateTime.UtcNow);
+					File.SetLastAccessTimeUtc (destination, DateTime.UtcNow);
 					return true;
 				}
 			}/* else
 				Console.WriteLine ("Skipping copying {0}, unchanged", Path.GetFileName (destination));*/
 
+			return false;
+		}
+
+		public static bool CopyIfStringChanged (string contents, string destination)
+		{
+			//NOTE: this is not optimal since it allocates a byte[]. We can improve this down the road with Span<T> or System.Buffers.
+			var bytes = Encoding.UTF8.GetBytes (contents);
+			return CopyIfBytesChanged (bytes, destination);
+		}
+
+		public static bool CopyIfBytesChanged (byte[] bytes, string destination)
+		{
+			if (HasBytesChanged (bytes, destination)) {
+				var directory = Path.GetDirectoryName (destination);
+				if (!string.IsNullOrEmpty (directory))
+					Directory.CreateDirectory (directory);
+
+				MonoAndroidHelper.SetWriteable (destination);
+				File.WriteAllBytes (destination, bytes);
+				return true;
+			}
+			return false;
+		}
+
+		public static bool CopyIfStreamChanged (Stream stream, string destination)
+		{
+			if (HasStreamChanged (stream, destination)) {
+				var directory = Path.GetDirectoryName (destination);
+				if (!string.IsNullOrEmpty (directory))
+					Directory.CreateDirectory (directory);
+
+				MonoAndroidHelper.SetWriteable (destination);
+				using (var fileStream = File.Create (destination)) {
+					stream.Position = 0; //HasStreamChanged read to the end
+					stream.CopyTo (fileStream);
+				}
+				return true;
+			}
 			return false;
 		}
 
@@ -78,6 +120,8 @@ namespace Xamarin.Android.Tools {
 				using (var f = File.Create (destination)) {
 					source.CopyTo (f);
 				}
+				File.SetLastWriteTimeUtc (destination, DateTime.UtcNow);
+				File.SetLastAccessTimeUtc (destination, DateTime.UtcNow);
 #if TESTCACHE
 				if (hash != null)
 					File.WriteAllText (destination + ".hash", hash);
@@ -96,6 +140,8 @@ namespace Xamarin.Android.Tools {
 				Directory.CreateDirectory (Path.GetDirectoryName (destination));
 
 				File.Copy (source, destination, true);
+				File.SetLastWriteTimeUtc (destination, DateTime.UtcNow);
+				File.SetLastAccessTimeUtc (destination, DateTime.UtcNow);
 #if TESTCACHE
 				if (hash != null)
 					File.WriteAllText (destination + ".hash", hash);
@@ -155,7 +201,39 @@ namespace Xamarin.Android.Tools {
 			var src_hash = HashFile (source);
 			var dst_hash = HashFile (destination);
 
-			// If the hashed don't match, then the file has changed
+			// If the hashes don't match, then the file has changed
+			if (src_hash != dst_hash)
+				return true;
+
+			return false;
+		}
+
+		public static bool HasStreamChanged (Stream source, string destination)
+		{
+			//If destination is missing, that's definitely a change
+			if (!File.Exists (destination))
+				return true;
+
+			var src_hash = HashStream (source);
+			var dst_hash = HashFile (destination);
+
+			// If the hashes don't match, then the file has changed
+			if (src_hash != dst_hash)
+				return true;
+
+			return false;
+		}
+
+		public static bool HasBytesChanged (byte [] bytes, string destination)
+		{
+			//If destination is missing, that's definitely a change
+			if (!File.Exists (destination))
+				return true;
+
+			var src_hash = HashBytes (bytes);
+			var dst_hash = HashFile (destination);
+
+			// If the hashes don't match, then the file has changed
 			if (src_hash != dst_hash)
 				return true;
 
@@ -203,48 +281,46 @@ namespace Xamarin.Android.Tools {
 			return ZipArchive.Open (filename, FileMode.Open, strictConsistencyChecks: strictConsistencyChecks);
 		}
 
-		public static bool ExtractAll(ZipArchive zip, string destination, Action<int, int> progressCallback = null, Func<string, string> modifyCallback = null,
-			Func<string, bool> deleteCallback = null, bool forceUpdate = true)
+		public static bool ExtractAll (ZipArchive zip, string destination, Action<int, int> progressCallback = null, Func<string, string> modifyCallback = null,
+			Func<string, bool> deleteCallback = null)
 		{
 			int i = 0;
 			int total = (int)zip.EntryCount;
 			bool updated = false;
 			HashSet<string> files = new HashSet<string> ();
-			foreach (var entry in zip) {
-				if (entry.FullName.Contains ("/__MACOSX/") ||
-						entry.FullName.EndsWith ("/__MACOSX", StringComparison.OrdinalIgnoreCase) ||
-						entry.FullName.EndsWith ("/.DS_Store", StringComparison.OrdinalIgnoreCase))
-					continue;
-				var fullName = modifyCallback?.Invoke (entry.FullName) ?? entry.FullName;
-				if (entry.IsDirectory) {
-					Directory.CreateDirectory (Path.Combine (destination, fullName));
-					continue;
-				}
-				if (progressCallback != null)
-					progressCallback (i++, total);
-				Directory.CreateDirectory (Path.Combine (destination, Path.GetDirectoryName (fullName)));
-				var outfile = Path.GetFullPath (Path.Combine (destination, fullName));
-				files.Add (outfile);
-				var dt = File.Exists (outfile) ? File.GetLastWriteTimeUtc (outfile) : DateTime.MinValue;
-				if (forceUpdate || entry.ModificationTime > dt) {
+			using (var memoryStream = new MemoryStream ()) {
+				foreach (var entry in zip) {
+					progressCallback?.Invoke (i++, total);
+					if (entry.IsDirectory)
+						continue;
+					if (entry.FullName.Contains ("/__MACOSX/") ||
+							entry.FullName.EndsWith ("/__MACOSX", StringComparison.OrdinalIgnoreCase) ||
+							entry.FullName.EndsWith ("/.DS_Store", StringComparison.OrdinalIgnoreCase))
+						continue;
+					var fullName = modifyCallback?.Invoke (entry.FullName) ?? entry.FullName;
+					var outfile = Path.GetFullPath (Path.Combine (destination, fullName));
+					files.Add (outfile);
+					memoryStream.SetLength (0); //Reuse the stream
+					entry.Extract (memoryStream);
 					try {
-						entry.Extract (destination, fullName, FileMode.Create);
+						updated |= MonoAndroidHelper.CopyIfStreamChanged (memoryStream, outfile);
 					} catch (PathTooLongException) {
 						throw new PathTooLongException ($"Could not extract \"{fullName}\" to \"{outfile}\". Path is too long.");
 					}
-					updated = true;
 				}
 			}
-			foreach (var file in Directory.GetFiles (destination, "*.*", SearchOption.AllDirectories)) {
-				var outfile = Path.GetFullPath (file);
-				if (outfile.Contains ("/__MACOSX/") ||
-				    		outfile.EndsWith ("__AndroidLibraryProjects__.zip", StringComparison.OrdinalIgnoreCase) ||
-						outfile.EndsWith ("/__MACOSX", StringComparison.OrdinalIgnoreCase) ||
-						outfile.EndsWith ("/.DS_Store", StringComparison.OrdinalIgnoreCase))
-					continue;
-				if (!files.Contains (outfile) && !(deleteCallback?.Invoke (outfile) ?? true)) {
-					File.Delete (outfile);
-					updated = true;
+			if (Directory.Exists (destination)) {
+				foreach (var file in Directory.GetFiles (destination, "*", SearchOption.AllDirectories)) {
+					var outfile = Path.GetFullPath (file);
+					if (outfile.Contains ("/__MACOSX/") ||
+							outfile.EndsWith ("__AndroidLibraryProjects__.zip", StringComparison.OrdinalIgnoreCase) ||
+							outfile.EndsWith ("/__MACOSX", StringComparison.OrdinalIgnoreCase) ||
+							outfile.EndsWith ("/.DS_Store", StringComparison.OrdinalIgnoreCase))
+						continue;
+					if (!files.Contains (outfile) && (deleteCallback?.Invoke (outfile) ?? true)) {
+						File.Delete (outfile);
+						updated = true;
+					}
 				}
 			}
 			return updated;
@@ -252,8 +328,15 @@ namespace Xamarin.Android.Tools {
 
 		public static string HashString (string s)
 		{
+			var bytes = Encoding.UTF8.GetBytes (s);
+			return HashBytes (bytes);
+		}
+
+		public static string HashBytes (byte [] bytes)
+		{
 			using (HashAlgorithm hashAlg = new SHA1Managed ()) {
-				return HashFile (s, hashAlg);
+				byte [] hash = hashAlg.ComputeHash (bytes);
+				return BitConverter.ToString (hash);
 			}
 		}
 
@@ -268,13 +351,14 @@ namespace Xamarin.Android.Tools {
 		{
 			using (Stream file = new FileStream (filename, FileMode.Open, FileAccess.Read)) {
 				byte[] hash = hashAlg.ComputeHash (file);
-
 				return BitConverter.ToString (hash);
 			}
 		}
 
 		public static string HashStream (Stream stream)
 		{
+			stream.Position = 0;
+
 			using (HashAlgorithm hashAlg = new SHA1Managed ()) {
 				byte[] hash = hashAlg.ComputeHash (stream);
 				return BitConverter.ToString (hash);

@@ -13,12 +13,6 @@ using System.Text;
 using Java.Interop;
 using Java.Interop.Tools.TypeNameMappings;
 
-#if JAVA_INTEROP
-using JniNativeMethod = Java.Interop.JniNativeMethodRegistration;
-#else
-using JniNativeMethod = Android.Runtime.JNIEnv.JNINativeMethod;
-#endif // JAVA_INTEROP
-
 namespace Android.Runtime {
 
 	struct JnienvInitializeArgs {
@@ -60,6 +54,8 @@ namespace Android.Runtime {
 		static UncaughtExceptionHandler defaultUncaughtExceptionHandler;
 
 		internal static bool IsRunningOnDesktop;
+
+		static AndroidRuntime androidRuntime;
 
 #if !JAVA_INTEROP
 		static JNIInvokeInterface invoke_iface;
@@ -116,26 +112,6 @@ namespace Android.Runtime {
 		[DllImport ("libc")]
 		static extern int gettid ();
 
-		delegate Delegate GetCallbackHandler ();
-
-		static MethodInfo dynamic_callback_gen;
-
-		static Delegate CreateDynamicCallback (MethodInfo method)
-		{
-			if (dynamic_callback_gen == null) {
-				var assembly = Assembly.Load ("Mono.Android.Export");
-				if (assembly == null)
-					throw new InvalidOperationException ("To use methods marked with ExportAttribute, Mono.Android.Export.dll needs to be referenced in the application");
-				var type = assembly.GetType ("Java.Interop.DynamicCallbackCodeGenerator");
-				if (type == null)
-					throw new InvalidOperationException ("The referenced Mono.Android.Export.dll does not match the expected version. The required type was not found.");
-				dynamic_callback_gen = type.GetMethod ("Create");
-				if (dynamic_callback_gen == null)
-					throw new InvalidOperationException ("The referenced Mono.Android.Export.dll does not match the expected version. The required method was not found.");
-			}
-			return (Delegate) dynamic_callback_gen.Invoke (null, new object [] {method});
-		}
-
 		static unsafe void RegisterJniNatives (IntPtr typeName_ptr, int typeName_len, IntPtr jniClass, IntPtr methods_ptr, int methods_len)
 		{
 			string typeName = new string ((char*) typeName_ptr, 0, typeName_len);
@@ -156,39 +132,13 @@ namespace Android.Runtime {
 				return;
 			}
 
-			TypeManager.RegisterType (Java.Interop.TypeManager.GetClassName (jniClass), type);
+			var className = Java.Interop.TypeManager.GetClassName (jniClass);
+			TypeManager.RegisterType (className, type);
 
-			string[] methods = new string ((char*) methods_ptr, 0, methods_len).Split ('\n');
-			if (methods.Length == 0)
-				return;
+			JniType jniType = null;
+			JniType.GetCachedJniType (ref jniType, className);
 
-			JniNativeMethod[] natives = new JniNativeMethod [methods.Length-1];
-			for (int i = 0; i < methods.Length; ++i) {
-				string method = methods [i];
-				if (string.IsNullOrEmpty (method))
-					continue;
-				string[] toks = methods [i].Split (new[]{':'}, 4);
-				Delegate callback;
-				if (toks [2] == "__export__") {
-					var mname = toks [0].Substring (2);
-					var minfo = type.GetMethods (BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static).Where (m => m.Name == mname && JavaNativeTypeManager.GetJniSignature (m) == toks [1]).FirstOrDefault ();
-					if (minfo == null)
-						throw new InvalidOperationException (String.Format ("Specified managed method '{0}' was not found. Signature: {1}", mname, toks [1]));
-					callback = CreateDynamicCallback (minfo);
-				} else {
-					GetCallbackHandler connector = (GetCallbackHandler) Delegate.CreateDelegate (typeof (GetCallbackHandler), 
-						toks.Length == 4 ? Type.GetType (toks [3], true) : type, toks [2]);
-					callback = connector ();
-				}
-				natives [i] = new JniNativeMethod (toks [0], toks [1], callback);
-			}
-
-#if JAVA_INTEROP
-			JniEnvironment.Types.RegisterNatives (new JniObjectReference (jniClass), natives, natives.Length);
-#else   // !JAVA_INTEROP
-			if (Env.RegisterNatives (Handle, jniClass, natives, natives.Length) != 0)
-				AndroidEnvironment.FailFast ("Unable to register JNI native methods for type: " + typeName);
-#endif  // !JAVA_INTEROP
+			androidRuntime.TypeManager.RegisterNativeMembers (jniType, type, methods_ptr == IntPtr.Zero ? null : new string ((char*) methods_ptr, 0, methods_len));
 
 			if (Logger.LogTiming) {
 				var __end = DateTime.UtcNow;
@@ -202,15 +152,16 @@ namespace Android.Runtime {
 		{
 			Logger.Categories = (LogCategories) args->logCategories;
 
-			var __start = new DateTime ();
+			Stopwatch stopper = null;
+			long elapsed, totalElapsed = 0;
 			if (Logger.LogTiming) {
-				__start = DateTime.UtcNow;
-				Logger.Log (LogLevel.Info,
-						"monodroid-timing",
-						"JNIEnv.Initialize start: " + (__start - new DateTime (1970, 1, 1)).TotalMilliseconds);
-				Logger.Log (LogLevel.Info,
-						"monodroid-timing",
-						"JNIEnv.Initialize: Logger JIT/etc. time: " + (DateTime.UtcNow - new DateTime (1970, 1, 1)).TotalMilliseconds + " [elapsed: " + (DateTime.UtcNow - __start).TotalMilliseconds + " ms]");
+				stopper = new Stopwatch ();
+				stopper.Start ();
+				Logger.Log (LogLevel.Info, "monodroid-timing", "JNIEnv.Initialize start");
+				elapsed = stopper.ElapsedMilliseconds;
+				totalElapsed += elapsed;
+				Logger.Log (LogLevel.Info, "monodroid-timing", $"JNIEnv.Initialize: Logger JIT/etc. time: elapsed {elapsed} ms]");
+				stopper.Restart ();
 			}
 
 			gref_gc_threshold = args->grefGcThreshold;
@@ -241,20 +192,18 @@ namespace Android.Runtime {
 				IdentityHash = v => v;
 
 #if JAVA_INTEROP
-			new AndroidRuntime (args->env, args->javaVm, androidSdkVersion > 10, args->grefLoader, args->Loader_loadClass);
+			androidRuntime = new AndroidRuntime (args->env, args->javaVm, androidSdkVersion > 10, args->grefLoader, args->Loader_loadClass);
 #endif // JAVA_INTEROP
 
 			if (Logger.LogTiming) {
-				var __end = DateTime.UtcNow;
-				Logger.Log (LogLevel.Info,
-						"monodroid-timing",
-						"JNIEnv.Initialize: time: " + (__end - new DateTime (1970, 1, 1)).TotalMilliseconds + " [elapsed: " + (__end - __start).TotalMilliseconds + " ms]");
-				__start = DateTime.UtcNow;
+				elapsed = stopper.ElapsedMilliseconds;
+				totalElapsed += elapsed;
+				Logger.Log (LogLevel.Info, "monodroid-timing", $"JNIEnv.Initialize: managed runtime init time: elapsed {elapsed} ms]");
+				stopper.Restart ();
 				var _ = Java.Interop.TypeManager.jniToManaged;
-				__end = DateTime.UtcNow;
-				Logger.Log (LogLevel.Info,
-						"monodroid-timing",
-						"JNIEnv.Initialize: TypeManager init time: " + (__end - new DateTime (1970, 1, 1)).TotalMilliseconds + " [elapsed: " + (__end - __start).TotalMilliseconds + " ms]");
+				elapsed = stopper.ElapsedMilliseconds;
+				totalElapsed += elapsed;
+				Logger.Log (LogLevel.Info, "monodroid-timing", $"JNIEnv.Initialize: TypeManager init time: elapsed {elapsed} ms]");
 			}
 
 			AllocObjectSupported = androidSdkVersion > 10;
@@ -288,10 +237,10 @@ namespace Android.Runtime {
 					Java.Lang.Thread.DefaultUncaughtExceptionHandler = defaultUncaughtExceptionHandler;
 			}
 
-			if (Logger.LogTiming)
-				Logger.Log (LogLevel.Info,
-						"monodroid-timing",
-						"JNIEnv.Initialize end: " + (DateTime.UtcNow - new DateTime (1970, 1, 1)).TotalMilliseconds);
+			if (Logger.LogTiming) {
+				totalElapsed += stopper.ElapsedMilliseconds;
+				Logger.Log (LogLevel.Info, "monodroid-timing", $"JNIEnv.Initialize end: elapsed {totalElapsed} ms");
+			}
 		}
 
 		internal static void Exit ()

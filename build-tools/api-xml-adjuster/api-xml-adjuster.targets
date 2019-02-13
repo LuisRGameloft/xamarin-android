@@ -8,8 +8,14 @@
   </PropertyGroup>
 
   <Target Name="_DefineApiFiles">
-    <CreateItem Include="@(AndroidApiInfo)"
-        AdditionalMetadata="ParameterDescription=$(_TopDir)\src\Mono.Android\Profiles\api-%(AndroidApiInfo.Level).params.txt;ClassParseXml=$(_OutputPath)api\api-%(AndroidApiInfo.Level).xml.class-parse;ApiAdjustedXml=$(_OutputPath)api\api-%(AndroidApiInfo.Level).xml.in">
+    <ItemGroup>
+      <_Api
+          Condition=" Exists('$(_TopDir)\src\Mono.Android\Profiles\api-%(AndroidApiInfo.Level).params.txt') "
+          Include="@(AndroidApiInfo)">
+      </_Api>
+    </ItemGroup>
+    <CreateItem Include="@(_Api)"
+        AdditionalMetadata="ParameterDescription=$(_TopDir)\src\Mono.Android\Profiles\api-%(_Api.Level).params.txt;ClassParseXml=$(_OutputPath)api\api-%(_Api.Level).xml.class-parse;ApiAdjustedXml=$(_OutputPath)api\api-%(_Api.Level).xml.in">
       <Output TaskParameter="Include" ItemName="ApiFileDefinition"/>
     </CreateItem>
   </Target>
@@ -18,7 +24,7 @@
       BeforeTargets="_AdjustApiXml"
       DependsOnTargets="_DefineApiFiles"
       Inputs="%(ApiFileDefinition.ParameterDescription)"
-      Outputs="%(ApiFileDefinition.ClassParseXml)">
+      Outputs="%(ApiFileDefinition.ApiAdjustedXml)">
     <PropertyGroup>
       <ClassParse>$(_TopDir)\bin\$(Configuration)\lib\xamarin.android\xbuild\Xamarin\Android\class-parse.exe</ClassParse>
     </PropertyGroup>

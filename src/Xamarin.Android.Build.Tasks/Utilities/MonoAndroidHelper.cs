@@ -2,20 +2,17 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
 using System.IO;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
-using Mono.Security.Cryptography;
 using Xamarin.Android.Tools;
 using Xamarin.Tools.Zip;
-using Mono.Cecil;
 
 #if MSBUILD
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 #endif
-
-using Xamarin.Android.Tools;
 
 namespace Xamarin.Android.Tasks
 {
@@ -88,22 +85,22 @@ namespace Xamarin.Android.Tasks
 #if MSBUILD
 		static TaskLoggingHelper androidSdkLogger;
 
-		public static void RefreshAndroidSdk (string sdkPath, string ndkPath, string javaPath)
+		public static void RefreshAndroidSdk (string sdkPath, string ndkPath, string javaPath, TaskLoggingHelper logHelper = null)
 		{
 			Action<TraceLevel, string> logger = (level, value) => {
-				var log = androidSdkLogger;
+				var log = logHelper ?? androidSdkLogger;
 				switch (level) {
 				case TraceLevel.Error:
 					if (log == null)
 						Console.Error.Write (value);
 					else
-						log.LogError ("{0}", value);
+						log.LogCodedError ("XA5300", "{0}", value);
 					break;
 				case TraceLevel.Warning:
 					if (log == null)
 						Console.WriteLine (value);
 					else
-						log.LogWarning ("{0}", value);
+						log.LogCodedWarning ("XA5300", "{0}", value);
 					break;
 				default:
 					if (log == null)
@@ -246,7 +243,6 @@ namespace Xamarin.Android.Tasks
 
 		static readonly string[] ValidAbis = new[]{
 			"arm64-v8a",
-			"armeabi",
 			"armeabi-v7a",
 			"x86",
 			"x86_64",
@@ -308,15 +304,18 @@ namespace Xamarin.Android.Tasks
 
 		public static bool IsReferenceAssembly (string assembly)
 		{
-			var a = AssemblyDefinition.ReadAssembly (assembly, new ReaderParameters () { InMemory = true, ReadSymbols = false, });
-			return IsReferenceAssembly (a);
-		}
-
-		public static bool IsReferenceAssembly (AssemblyDefinition assembly)
-		{
-			if (!assembly.HasCustomAttributes)
+			using (var stream = File.OpenRead (assembly))
+			using (var pe = new PEReader (stream)) {
+				var reader = pe.GetMetadataReader ();
+				var assemblyDefinition = reader.GetAssemblyDefinition ();
+				foreach (var handle in assemblyDefinition.GetCustomAttributes ()) {
+					var attribute = reader.GetCustomAttribute (handle);
+					var attributeName = reader.GetCustomAttributeFullName (attribute);
+					if (attributeName == "System.Runtime.CompilerServices.ReferenceAssemblyAttribute")
+						return true;
+				}
 				return false;
-			return assembly.CustomAttributes.Any (t => t.AttributeType.FullName == "System.Runtime.CompilerServices.ReferenceAssemblyAttribute");
+			}
 		}
 
 		public static bool ExistsInFrameworkPath (string assembly)
@@ -386,6 +385,21 @@ namespace Xamarin.Android.Tasks
 			return Files.CopyIfChanged (source, destination);
 		}
 
+		public static bool CopyIfStringChanged (string contents, string destination)
+		{
+			return Files.CopyIfStringChanged (contents, destination);
+		}
+
+		public static bool CopyIfBytesChanged (byte [] bytes, string destination)
+		{
+			return Files.CopyIfBytesChanged (bytes, destination);
+		}
+
+		public static bool CopyIfStreamChanged (Stream source, string destination)
+		{
+			return Files.CopyIfStreamChanged (source, destination);
+		}
+
 		public static bool CopyIfZipChanged (Stream source, string destination)
 		{
 			return Files.CopyIfZipChanged (source, destination);
@@ -398,7 +412,11 @@ namespace Xamarin.Android.Tasks
 
 		public static ZipArchive ReadZipFile (string filename)
 		{
-			return Files.ReadZipFile (filename);
+			try {
+				return Files.ReadZipFile (filename);
+			} catch (ZipIOException ex) {
+				throw new ZipIOException ($"There was an error opening {filename}. The file is probably corrupt. Try deleting it and building again. {ex.Message}", ex);
+			}
 		}
 
 		public static bool IsValidZip (string filename)
@@ -483,6 +501,10 @@ namespace Xamarin.Android.Tasks
 			"Mono.Android.Support.v4.dll",
 			"Xamarin.Android.NUnitLite.dll", // AndroidResources
 		};
+		internal static readonly string [] FrameworkEmbeddedNativeLibraryAssemblies = {
+			"Mono.Data.Sqlite.dll",
+			"Mono.Posix.dll",
+		};
 		// MUST BE SORTED CASE-INSENSITIVE
 		internal static readonly string[] FrameworkAssembliesToTreatAsUserAssemblies = {
 			"Mono.Android.GoogleMaps.dll",
@@ -497,11 +519,45 @@ namespace Xamarin.Android.Tasks
 			if (!File.Exists (acwPath))
 				return acw_map;
 			foreach (var s in File.ReadLines (acwPath)) {
-				var items = s.Split (';');
+				var items = s.Split (new char[] { ';' }, count: 2);
 				if (!acw_map.ContainsKey (items [0]))
 					acw_map.Add (items [0], items [1]);
 			}
 			return acw_map;
+		}
+
+		public static Dictionary<string, HashSet<string>> LoadCustomViewMapFile (IBuildEngine4 engine, string mapFile)
+		{
+			var cachedMap = (Dictionary<string, HashSet<string>>)engine?.GetRegisteredTaskObject (mapFile, RegisteredTaskObjectLifetime.Build);
+			if (cachedMap != null)
+				return cachedMap;
+			var map = new Dictionary<string, HashSet<string>> ();
+			if (!File.Exists (mapFile))
+				return map;
+			foreach (var s in File.ReadLines (mapFile)) {
+				var items = s.Split (new char [] { ';' }, count: 2);
+				var key = items [0];
+				var value = items [1];
+				HashSet<string> set;
+				if (!map.TryGetValue (key, out set))
+					map.Add (key, set = new HashSet<string> ());
+				set.Add (value);
+			}
+			return map;
+		}
+
+		public static bool SaveCustomViewMapFile (IBuildEngine4 engine, string mapFile, Dictionary<string, HashSet<string>> map)
+		{
+			engine?.RegisterTaskObject (mapFile, map, RegisteredTaskObjectLifetime.Build, allowEarlyCollection: false);
+			using (var stream = new MemoryStream ())
+			using (var writer = new StreamWriter (stream)) {
+				foreach (var i in map.OrderBy (x => x.Key)) {
+					foreach (var v in i.Value.OrderBy (x => x))
+						writer.WriteLine ($"{i.Key};{v}");
+				}
+				writer.Flush ();
+				return CopyIfStreamChanged (stream, mapFile);
+			}
 		}
 
 		public static string [] GetProguardEnvironmentVaribles (string proguardHome)
@@ -527,15 +583,14 @@ namespace Xamarin.Android.Tasks
 
 		public static IEnumerable<string> Executables (string executable)
 		{
-			yield return executable;
 			var pathExt = Environment.GetEnvironmentVariable ("PATHEXT");
 			var pathExts = pathExt?.Split (new char [] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries);
 
-			if (pathExts == null)
-				yield break;
-
-			foreach (var ext in pathExts)
-				yield return Path.ChangeExtension (executable, ext);
+			if (pathExts != null) {
+				foreach (var ext in pathExts)
+					yield return Path.ChangeExtension (executable, ext);
+			}
+			yield return executable;
 		}
 
 		public static string TryGetAndroidJarPath (TaskLoggingHelper log, string platform)
@@ -552,6 +607,16 @@ namespace Xamarin.Android.Tasks
 				return null;
 			}
 			return Path.Combine (platformPath, "android.jar");
+		}
+
+		public static Dictionary<string, string> LoadResourceCaseMap (string resourceCaseMap)
+		{
+			var result = new Dictionary<string, string> ();
+			if (resourceCaseMap != null) {
+				foreach (var arr in resourceCaseMap.Split (';').Select (l => l.Split ('|')).Where (a => a.Length == 2))
+					result [arr [1]] = arr [0]; // lowercase -> original
+			}
+			return result;
 		}
 	}
 }

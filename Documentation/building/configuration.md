@@ -29,7 +29,7 @@ Overridable MSBuild properties include:
 
   * `$(AndroidFirstFrameworkVersion)`: The first `$(TargetFrameworkVersion)`
     which will be built by `make jenkins` and included in the installer.
-    Currently `v2.3`, but will be changed when we drop support for API-10.
+    Currently `v4.4`.
     This controls what is included in `build-tools/create-vsix` packages.
 
   * `$(AndroidFrameworkVersion)`: The Xamarin.Android `$(TargetFrameworkVersion)`
@@ -95,7 +95,6 @@ Overridable MSBuild properties include:
     the Mono JIT for inclusion within apps. This is a `:`-separated list of
     ABIs to build. Supported values are:
 
-      * `armeabi`
       * `armeabi-v7a`
       * `arm64-v8a`
       * `x86`
@@ -142,3 +141,9 @@ Overridable MSBuild properties include:
 
       * `4`: Mono 4.6 support.
       * `5`: Mono 4.8 and above support. This is the default.
+
+  * `$(XAIncludeProprietaryBits)`: Defaults to `False`. When enabled, this flag
+    signals `proprietary.csproj` to copy proprietary assemblies from your system's
+    Xamarin.Android install to the local build output. This enables proprietary
+    features such as debugging and fast deployment. Since a "normal" OSS build would
+    not include proprietary files, this flag also emits a warning when enabled.

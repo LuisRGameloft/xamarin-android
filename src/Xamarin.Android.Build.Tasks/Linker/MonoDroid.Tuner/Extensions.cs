@@ -7,6 +7,9 @@ using Mono.Linker;
 
 using Mono.Tuner;
 
+using Java.Interop;
+using Java.Interop.Tools.Cecil;
+
 namespace MonoDroid.Tuner {
 
 	static class Extensions {
@@ -137,8 +140,15 @@ namespace MonoDroid.Tuner {
 
 		public static bool TryGetRegisterMember (this MethodDefinition md, out string method)
 		{
+			return TryGetRegisterMember (md, out method, out _, out _);
+		}
+
+		public static bool TryGetRegisterMember (this MethodDefinition md, out string method, out string nativeMethod, out string signature)
+		{
 			CustomAttribute register;
 			method = null;
+			nativeMethod = null;
+			signature = null;
 
 			if (!md.TryGetRegisterAttribute (out register))
 				return false;
@@ -146,12 +156,98 @@ namespace MonoDroid.Tuner {
 			if (register.ConstructorArguments.Count != 3)
 				return false;
 
+			nativeMethod = (string)register.ConstructorArguments [0].Value;
+			signature = (string)register.ConstructorArguments [1].Value;
 			method = (string)register.ConstructorArguments [2].Value;
 
 			if (string.IsNullOrEmpty (method))
 				return false;
 
 			return true;
+		}
+
+		public static TypeDefinition GetMarshalMethodsType (this TypeDefinition type)
+		{
+			foreach (var nt in type.NestedTypes) {
+				if (nt.Name == "__<$>_jni_marshal_methods")
+					return nt;
+			}
+
+			return null;
+		}
+
+		public static bool TryGetBaseOrInterfaceRegisterMember (this MethodDefinition method, out string member, out string nativeMethod, out string signature)
+		{
+			var type = method.DeclaringType;
+
+			member = nativeMethod = signature = null;
+
+			if (method.IsConstructor || type == null || !type.HasNestedTypes)
+				return false;
+
+			var m = method.GetBaseDefinition ();
+
+			while (m != null) {
+				if (m == method)
+                                        break;
+
+				method = m;
+
+				if (m.TryGetRegisterMember (out member, out nativeMethod, out signature))
+					return true;
+
+				m = m.GetBaseDefinition ();
+			}
+
+			if (!method.DeclaringType.HasInterfaces || !method.IsNewSlot)
+				return false;
+
+			foreach (var iface in method.DeclaringType.Interfaces) {
+				if (iface.InterfaceType.IsGenericInstance)
+                                        continue;
+
+				var itype = iface.InterfaceType.Resolve ();
+				if (itype == null || !itype.HasMethods)
+					continue;
+
+				foreach (var im in itype.Methods)
+					if (im.IsEqual (method))
+						return im.TryGetRegisterMember (out member, out nativeMethod, out signature);
+                        }
+
+                        return false;
+		}
+
+		public static bool IsEqual (this MethodDefinition m1, MethodDefinition m2)
+		{
+			if (m1.Name != m2.Name || m1.ReturnType.Name != m2.ReturnType.Name)
+				return false;
+
+			return m1.Parameters.AreParametersCompatibleWith (m2.Parameters);
+		}
+
+		public static bool TryGetMarshalMethod (this MethodDefinition method, string nativeMethod, string signature, out MethodDefinition marshalMethod)
+		{
+			marshalMethod = null;
+			var type = method.DeclaringType;
+			if (!type.HasNestedTypes)
+				return false;
+
+			TypeDefinition marshalType = type.GetMarshalMethodsType ();
+			if (marshalType == null || !marshalType.HasMethods)
+				return false;
+
+			var marshalMethodName = MarshalMemberBuilder.GetMarshalMethodName (nativeMethod, signature);
+			if (marshalMethodName == null)
+				return false;
+
+			foreach (var m in marshalType.Methods)
+				if (m.Name == marshalMethodName) {
+					marshalMethod = m;
+					return true;
+				}
+
+			return false;
 		}
 	}
 }

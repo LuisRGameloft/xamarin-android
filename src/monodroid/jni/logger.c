@@ -9,10 +9,11 @@
 #include <android/log.h>
 #endif
 
+#include "logger.h"
+
 #include "monodroid.h"
 #include "monodroid-glue.h"
 #include "debug.h"
-#include "logger.h"
 #include "util.h"
 
 #define DO_LOG(_level_,_category_,_format_,_args_)						                        \
@@ -57,6 +58,7 @@ __android_log_vprint (int prio, const char* tag, const char* fmt, va_list ap)
 #endif
 
 unsigned int log_categories;
+unsigned int log_timing_categories;
 int gc_spew_enabled;
 
 static FILE*
@@ -93,21 +95,38 @@ open_file (LogCategories category, const char *path, const char *override_dir, c
 	return f;
 }
 
+static const char *gref_file = NULL;
+static const char *lref_file = NULL;
+static int light_gref  = 0;
+static int light_lref  = 0;
+
 void
-init_categories (const char *override_dir)
+init_reference_logging (const char *override_dir)
+{
+	if ((log_categories & LOG_GREF) != 0 && !light_gref) {
+		gref_log  = open_file (LOG_GREF, gref_file, override_dir, "grefs.txt");
+	}
+
+	if ((log_categories & LOG_LREF) != 0 && !light_lref) {
+		// if both lref & gref have files specified, and they're the same path, reuse the FILE*.
+		if (lref_file != NULL && strcmp (lref_file, gref_file != NULL ? gref_file : "") == 0) {
+			lref_log  = gref_log;
+		} else {
+			lref_log  = open_file (LOG_LREF, lref_file, override_dir, "lrefs.txt");
+		}
+	}
+}
+
+void
+init_logging_categories ()
 {
 	char *value;
 	char **args, **ptr;
 
-	const char *gref_file = NULL;
-	const char *lref_file = NULL;
-
 #if !ANDROID
 	log_categories = LOG_DEFAULT;
 #endif
-	int light_gref  = 0;
-	int light_lref  = 0;
-
+	log_timing_categories = LOG_TIMING_DEFAULT;
 	if (monodroid_get_namespaced_system_property (DEBUG_MONO_LOG_PROPERTY, &value) == 0)
 		return;
 
@@ -154,18 +173,9 @@ init_categories (const char *override_dir)
 			log_categories  |= LOG_LREF;
 			light_lref       = 1;
 		}
-	}
 
-	if ((log_categories & LOG_GREF) != 0 && !light_gref) {
-		gref_log  = open_file (LOG_GREF, gref_file, override_dir, "grefs.txt");
-	}
-
-	if ((log_categories & LOG_LREF) != 0 && !light_lref) {
-		// if both lref & gref have files specified, and they're the same path, reuse the FILE*.
-		if (lref_file != NULL && strcmp (lref_file, gref_file != NULL ? gref_file : "") == 0) {
-			lref_log  = gref_log;
-		} else {
-			lref_log  = open_file (LOG_LREF, lref_file, override_dir, "lrefs.txt");
+		if (!strncmp (arg, "timing=bare", 11)) {
+			log_timing_categories |= LOG_TIMING_BARE;
 		}
 	}
 
@@ -194,7 +204,7 @@ log_fatal (LogCategories category, const char *format, ...)
 }
 
 void
-log_info (LogCategories category, const char *format, ...)
+log_info_nocheck (LogCategories category, const char *format, ...)
 {
 	va_list args;
 
@@ -213,7 +223,7 @@ log_warn (LogCategories category, const char *format, ...)
 }
 
 void
-log_debug (LogCategories category, const char *format, ...)
+log_debug_nocheck (LogCategories category, const char *format, ...)
 {
 	va_list args;
 

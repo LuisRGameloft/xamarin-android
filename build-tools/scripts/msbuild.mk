@@ -22,7 +22,7 @@
 #   $(MSBUILD): The MSBuild program to use. Defaults to `xbuild` unless overridden.
 #   $(MSBUILD_FLAGS): Additional MSBuild flags; contains $(CONFIGURATION), $(V), $(MSBUILD_ARGS).
 
-MSBUILD       = xbuild
+MSBUILD       = msbuild
 MSBUILD_FLAGS = /p:Configuration=$(CONFIGURATION) $(MSBUILD_ARGS)
 
 ifeq ($(OS_NAME),Darwin)
@@ -31,15 +31,18 @@ else    # $(OS_NAME) != Darwin
 _PKG_CONFIG   = pkg-config
 endif   # $(OS_NAME) == Darwin
 
-ifneq ($(V),0)
-MSBUILD_FLAGS += /v:diag
-endif   # $(V) != 0
-
 ifeq ($(MSBUILD),msbuild)
-USE_MSBUILD   = 1
+export USE_MSBUILD  = 1
 endif   # $(MSBUILD) == msbuild
 
 ifeq ($(USE_MSBUILD),1)
+
+# $(call MSBUILD_BINLOG,name,msbuild=$(MSBUILD))
+define MSBUILD_BINLOG
+	$(if $(2),$(2),$(MSBUILD)) $(MSBUILD_FLAGS) /v:normal \
+		/binaryLogger:"$(dir $(realpath $(firstword $(MAKEFILE_LIST))))/bin/Build$(CONFIGURATION)/msbuild-`date +%Y%m%dT%H%M%S`-$(1).binlog"
+endef
+
 else    # $(MSBUILD) != 1
 _CSC_EMITS_PDB  := $(shell if $(_PKG_CONFIG) --atleast-version=4.9 mono ; then echo Pdb; fi )
 ifeq ($(_CSC_EMITS_PDB),Pdb)
@@ -47,4 +50,14 @@ MSBUILD_FLAGS += /p:_DebugFileExt=.pdb
 else    # $(_CSC_EMITS_PDB) == ''
 MSBUILD_FLAGS += /p:_DebugFileExt=.mdb
 endif   # $(_CSC_EMITS_PDB) == Pdb
+
+ifneq ($(V),0)
+MSBUILD_FLAGS += /v:diag
+endif   # $(V) != 0
+
+# $(call MSBUILD_BINLOG,name,msbuild=$(MSBUILD))
+define MSBUILD_BINLOG
+	$(if $(2),$(2),$(MSBUILD)) $(MSBUILD_FLAGS)
+endef
+
 endif   # $(USE_MSBUILD) == 1

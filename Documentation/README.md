@@ -19,14 +19,17 @@
 
   * [Build Process](guides/BuildProcess.md)
   * [`.axml` CodeBehind Support](guides/LayoutCodeBehind.md)
+  * [MSBuild Best Practices](guides/MSBuildBestPractices.md)
+  * [D8 and R8 Integration](guides/D8andR8.md)
 
 
 # Building from Source
 
   * [Build System Configuration](building/configuration.md)
-  * [Build Dependencies](building/dependencies.md)
-  * [Building Xamarin.Android on Linux and macOS](building/unix-instructions.md)
-  * [Building Xamarin.Android on Windows](building/windows-instructions.md)
+  * [Build Dependencies for Linux and macOS](building/unix/dependencies.md)
+  * [Building Xamarin.Android on Linux and macOS](building/unix/instructions.md)
+  * [Build Dependencies for Windows](building/windows/dependencies.md)
+  * [Building Xamarin.Android on Windows](building/windows/instructions.md)
 
 
 # Development Workflow

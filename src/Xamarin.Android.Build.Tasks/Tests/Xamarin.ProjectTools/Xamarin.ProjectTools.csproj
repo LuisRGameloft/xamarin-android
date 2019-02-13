@@ -7,12 +7,12 @@
     <OutputType>Library</OutputType>
     <RootNamespace>Xamarin.ProjectTools</RootNamespace>
     <AssemblyName>Xamarin.ProjectTools</AssemblyName>
-    <TargetFrameworkVersion>v4.5.1</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
   </PropertyGroup>
   <Import Project="..\..\..\..\Configuration.props" />
+  <Import Project="..\..\..\..\build-tools\scripts\MSBuildReferences.projitems" />
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>..\..\..\..\bin\TestDebug</OutputPath>
     <DefineConstants>DEBUG;</DefineConstants>
@@ -21,7 +21,6 @@
     <ConsolePause>false</ConsolePause>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>full</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>..\..\..\..\bin\TestRelease</OutputPath>
     <ErrorReport>prompt</ErrorReport>
@@ -32,9 +31,6 @@
     <Reference Include="System" />
     <Reference Include="System.Xml" />
     <Reference Include="System.Xml.Linq" />
-    <Reference Include="Microsoft.Build.Framework" />
-    <Reference Include="Microsoft.Build" />
-    <Reference Include="Microsoft.Build.Engine" />
     <Reference Include="System.Drawing" />
     <Reference Include="Microsoft.Web.XmlTransform">
       <HintPath>..\..\..\..\packages\Microsoft.Web.Xdt.2.1.1\lib\net40\Microsoft.Web.XmlTransform.dll</HintPath>
@@ -58,6 +54,7 @@
     <Compile Include="Android\XamarinAndroidProject.cs" />
     <Compile Include="Android\XamarinAndroidProjectLanguage.cs" />
     <Compile Include="Android\XamarinAndroidWearApplicationProject.cs" />
+    <Compile Include="Android\XamarinFormsAndroidApplicationProject.cs" />
     <Compile Include="Android\AndroidItem.cs" />
     <Compile Include="Common\DownloadedCache.cs" />
     <Compile Include="Common\ProjectBuilder.cs" />
@@ -66,6 +63,7 @@
     <Compile Include="Android\KnownProperties.cs" />
     <Compile Include="Android\AndroidLinkMode.cs" />
     <Compile Include="Common\FailedBuildException.cs" />
+    <Compile Include="Utilities\DexUtils.cs" />
     <Compile Include="Utilities\PNGChecker.cs" />
     <Compile Include="Utilities\ZipHelper.cs" />
     <Compile Include="Common\XamarinPCLProject.cs" />
@@ -80,14 +78,9 @@
     <Compile Include="Common\ContentBuilder.cs" />
     <Compile Include="Common\DotNetStandard.cs" />
     <Compile Include="Common\DotNetXamarinProject.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Common\" />
-    <Folder Include="Android\" />
-    <Folder Include="Resources\" />
-    <Folder Include="Resources\Wear\" />
-    <Folder Include="Resources\Base\" />
-    <Folder Include="Utilities\" />
+    <Compile Include="..\..\..\..\bin\Test$(CONFIGURATION)\XABuildPaths.cs">
+      <Link>XABuildPaths.cs</Link>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources\Wear\LayoutMain.axml">
@@ -135,11 +128,22 @@
     <EmbeddedResource Include="Resources\Base\classes.jar">
       <LogicalName>Xamarin.ProjectTools.Resources.Base.classes.jar</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="Resources\Forms\MainActivity.cs" />
+    <EmbeddedResource Include="Resources\Forms\App.xaml" />
+    <EmbeddedResource Include="Resources\Forms\App.xaml.cs" />
+    <EmbeddedResource Include="Resources\Forms\MainPage.xaml" />
+    <EmbeddedResource Include="Resources\Forms\MainPage.xaml.cs" />
+    <EmbeddedResource Include="Resources\Forms\Tabbar.axml" />
+    <EmbeddedResource Include="Resources\Forms\Toolbar.axml" />
+    <EmbeddedResource Include="Resources\Forms\colors.xml" />
+    <EmbeddedResource Include="Resources\Forms\styles.xml" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
-    <Content
-        Include="..\..\..\..\.nuget\NuGet.exe">
+    <Content Include="..\..\..\..\.nuget\NuGet.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="FrameworkPath.targets">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

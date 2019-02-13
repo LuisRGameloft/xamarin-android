@@ -22,8 +22,9 @@
         Condition=" '$(RequireNewEmulator)' != 'True' "
         AdbTarget="$(AdbTarget)"
         ToolExe="$(AdbToolExe)"
-        ToolPath="$(AdbToolPath)">
-      <Output TaskParameter="AdbTarget"     PropertyName="_AdbTarget" />
+        ToolPath="$(AdbToolPath)"
+        Timeout="60000">
+      <Output TaskParameter="DetectedAdbTarget"     PropertyName="_AdbTarget" />
       <Output TaskParameter="IsValidTarget" PropertyName="_ValidAdbTarget"  />
     </Xamarin.Android.Tools.BootstrapTasks.CheckAdbTarget>
     <CreateAndroidEmulator
@@ -31,10 +32,12 @@
         AndroidAbi="x86"
         AndroidSdkHome="$(AndroidSdkDirectory)"
         JavaSdkHome="$(JavaSdkDirectory)"
-        SdkVersion="21"
+        SdkVersion="28"
         ImageName="$(_TestImageName)"
         ToolExe="$(AvdManagerToolExe)"
         ToolPath="$(AndroidToolsBinPath)"
+        RamSizeMB="2048"
+        DataPartitionSizeMB="2048"
     />
     <StartAndroidEmulator
         Condition=" '$(_ValidAdbTarget)' != 'True' "
@@ -53,23 +56,30 @@
         Arguments="$(_AdbTarget) wait-for-device"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
+        Timeout="120000"
     />
     <Xamarin.Android.Tools.BootstrapTasks.Adb
         EnvironmentVariables="ADB_TRACE=all"
         Condition=" '$(_ValidAdbTarget)' != 'True' "
+        ContinueOnError="ErrorAndContinue"
         Arguments="$(_EmuTarget) shell 'counter=0; while [ $counter -lt 60 ] &amp;&amp; [ &quot;`getprop sys.boot_completed`&quot; != &quot;1&quot; ]; do echo Waiting for device to fully boot; sleep 1; let &quot;counter++&quot;; done'"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
-	/>
+        Timeout="120000"
+    />
     <Xamarin.Android.Tools.BootstrapTasks.Adb
         Arguments="$(_AdbTarget) shell setprop debug.mono.log timing"
+        IgnoreExitCode="True"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
+        Timeout="60000"
     />
     <Xamarin.Android.Tools.BootstrapTasks.Adb
         Arguments="$(_AdbTarget) logcat -G 4M"
+        IgnoreExitCode="True"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
+        Timeout="60000"
     />
     <Message
         Condition=" '$(_EmuTarget)' != '' "
@@ -80,32 +90,35 @@
   <Target Name="ReleaseAndroidTarget">
     <Xamarin.Android.Tools.BootstrapTasks.Adb
         Condition="'@(_FailedComponent)' != ''"
-        ContinueOnError="True"
+        ContinueOnError="ErrorAndContinue"
         Arguments="$(_EmuTarget) logcat -d"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
+        Timeout="120000"
     />
     <Xamarin.Android.Tools.BootstrapTasks.Adb
         Condition=" '$(_EmuTarget)' != '' "
-        ContinueOnError="True"
+        ContinueOnError="ErrorAndContinue"
         Arguments="$(_EmuTarget) emu kill"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
+        Timeout="60000"
     />
     <KillProcess
         Condition=" '$(_EmuTarget)' != '' "
-        ContinueOnError="True"
+        ContinueOnError="ErrorAndContinue"
         ProcessId="$(_EmuPid)"
     />
     <Xamarin.Android.Tools.BootstrapTasks.Adb
         Arguments="kill-server"
-        ContinueOnError="True"
+        ContinueOnError="ErrorAndContinue"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
+        Timeout="60000"
     />
     <Exec
         Condition=" '$(HostOS)' != 'Windows' And '$(_EmuTarget)' != '' "
-        ContinueOnError="True"
+        ContinueOnError="WarnAndContinue"
         Command="kill -HUP $(_EmuPid)"
     />
     <Sleep
@@ -114,9 +127,12 @@
     />
     <Exec
         Condition=" '$(HostOS)' != 'Windows' And '$(_EmuTarget)' != '' "
-        ContinueOnError="True"
+        ContinueOnError="WarnAndContinue"
+        IgnoreStandardErrorWarningFormat="true"
         Command="kill -KILL $(_EmuPid)"
     />
+  </Target>
+  <Target Name="ReportComponentFailures">
     <Error
         Condition="'@(_FailedComponent)' != ''"
         Text="Execution of the following components did not complete successfully: @(_FailedComponent->'%(Identity)', ', ')"
@@ -137,8 +153,10 @@
       Condition=" '@(TestApk)' != '' ">
     <Xamarin.Android.Tools.BootstrapTasks.Adb
         Arguments="$(_AdbTarget) $(AdbOptions) install &quot;%(TestApk.Identity)&quot;"
+        ContinueOnError="ErrorAndContinue"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
+        Timeout="120000"
     />
   </Target>
 
@@ -148,6 +166,8 @@
         Arguments="$(_AdbTarget) $(AdbOptions) uninstall &quot;%(TestApk.Package)&quot;"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
+        Timeout="120000"
+	IgnoreExitCode="true"
     />
   </Target>
 
@@ -155,46 +175,54 @@
       Condition=" '@(TestApk)' != '' ">
     <Xamarin.Android.Tools.BootstrapTasks.Adb
         Condition=" '@(TestApkPermission)' != '' "
+        IgnoreExitCode="True"
         Arguments="$(_AdbTarget) $(AdbOptions) shell pm grant %(TestApkPermission.Package) android.permission.%(TestApkPermission.Identity)"
         ToolExe="$(AdbToolExe)"
         ToolPath="$(AdbToolPath)"
+        Timeout="60000"
     />
     <PropertyGroup>
       <_IncludeCategories Condition=" '$(IncludeCategories)' != '' ">include=$(IncludeCategories)</_IncludeCategories>
       <_ExcludeCategories Condition=" '$(ExcludeCategories)' != '' ">exclude=$(ExcludeCategories)</_ExcludeCategories>
+      <_LogcatFilenameBase>logcat-$(Configuration)$(TestsFlavor)</_LogcatFilenameBase>
     </PropertyGroup>
     <RunInstrumentationTests
         Condition=" '%(TestApkInstrumentation.Identity)' != ''"
+        ContinueOnError="ErrorAndContinue"
         AdbTarget="$(_AdbTarget)"
         AdbOptions="$(AdbOptions)"
+        LogLevel="Verbose"
+        PackageName="%(TestApkInstrumentation.Package)"
         Component="%(TestApkInstrumentation.Package)/%(TestApkInstrumentation.Identity)"
         NUnit2TestResultsFile="%(TestApkInstrumentation.ResultsPath)"
+        LogcatFilename="$(_LogcatFilenameBase)-%(TestApkInstrumentation.Package).txt"
         InstrumentationArguments="$(_IncludeCategories);$(_ExcludeCategories)"
         TestFixture="$(TestFixture)"
         ToolExe="$(AdbToolExe)"
-        ToolPath="$(AdbToolPath)">
+        ToolPath="$(AdbToolPath)"
+        Timeout="1800000">
       <Output TaskParameter="FailedToRun" ItemName="_FailedComponent"/>
     </RunInstrumentationTests>
     <RunUITests
         Condition=" '%(TestApk.Activity)' != '' "
+        ContinueOnError="ErrorAndContinue"
         AdbTarget="$(_AdbTarget)"
         AdbOptions="$(AdbOptions)"
         Activity="%(TestApk.Activity)"
+        LogcatFilename="$(_LogcatFilenameBase)-%(TestApk.Package).txt"
         ToolExe="$(AdbToolExe)"
-        ToolPath="$(AdbToolPath)">
+        ToolPath="$(AdbToolPath)"
+        Timeout="300000">
     </RunUITests>
-    <PropertyGroup>
-      <_LogcatFilename>logcat-$(Configuration)$(TestsAotName).txt</_LogcatFilename>
-    </PropertyGroup>
-    <Exec Command="&quot;$(AdbToolPath)\$(AdbToolExe)&quot; $(_AdbTarget) $(AdbOptions) logcat -v threadtime -d > $(_LogcatFilename)" />
     <ProcessLogcatTiming
-        Condition=" '%(TestApk.TimingDefinitionsFilename)' != '' "
-        InputFilename="$(_LogcatFilename)"
+        Condition=" '%(TestApk.TimingDefinitionsFilename)' != ''"
+        ContinueOnError="ErrorAndContinue"
+        InputFilename="$(_LogcatFilenameBase)-%(TestApk.Package).txt"
         ApplicationPackageName="%(TestApk.Package)"
         ResultsFilename="%(TestApk.TimingResultsFilename)"
         DefinitionsFilename="%(TestApk.TimingDefinitionsFilename)"
         AddResults="true"
-        LabelSuffix="-$(Configuration)$(TestsAotName)"
+        LabelSuffix="-$(Configuration)$(TestsFlavor)"
         Activity="%(TestApk.Activity)" />
   </Target>
   <Target Name="RenameTestCases">
@@ -223,14 +251,19 @@
         Configuration="$(Configuration)"
         DeleteSourceFiles="$(_DeleteSource)"
         SourceFile="%(_RenameSource.Identity)"
-        DestinationFolder="%(_RenameSource.DestinationFolder)"
+        DestinationFolder="%(_RenameSource.DestinationFolder)">
+      <Output TaskParameter="CreatedFiles" ItemName="_RenameFailed"/>
+    </RenameTestCases>
+    <Error
+        Condition=" '%(_RenameFailed.Invalid)' != '' "
+        Text="One or more of the unit tests failed to produce an NUnit XML file.  Did a unit test runner crash?"
     />
   </Target>
   <Target Name="RenameApkTestCases"
       Condition=" '@(TestApk)' != '' ">
     <RenameTestCases
         Condition=" '%(TestApkInstrumentation.ResultsPath)' != '' "
-        Configuration="$(Configuration)$(TestsAotName)"
+        Configuration="$(Configuration)$(TestsFlavor)"
         DeleteSourceFiles="True"
         DestinationFolder="$(MSBuildThisFileDirectory)..\.."
         SourceFile="%(TestApkInstrumentation.ResultsPath)"
@@ -241,14 +274,17 @@
     <Exec
         Condition=" '$(HostOS)' == 'Darwin' And '%(TestApk.ApkSizesDefinitionFilename)' != '' "
         Command="stat -f &quot;stat: %z %N&quot; &quot;%(TestApk.Identity)&quot; > &quot;$(OutputPath)%(TestApk.ApkSizesInputFilename)&quot;"
+        ContinueOnError="ErrorAndContinue"
     />
     <Exec
         Condition=" '$(HostOS)' == 'Linux'  And '%(TestApk.ApkSizesDefinitionFilename)' != '' "
         Command="stat -c &quot;stat: %s %N&quot; &quot;%(TestApk.Identity)&quot; > &quot;$(OutputPath)%(TestApk.ApkSizesInputFilename)&quot;"
+        ContinueOnError="ErrorAndContinue"
     />
     <Exec
         Condition=" '%(TestApk.ApkSizesDefinitionFilename)' != '' "
-        Command="unzip -l &quot;%(TestApk.Identity)&quot; >> &quot;$(OutputPath)%(TestApk.ApkSizesInputFilename)&quot;" />
+        Command="unzip -l &quot;%(TestApk.Identity)&quot; >> &quot;$(OutputPath)%(TestApk.ApkSizesInputFilename)&quot;"
+        ContinueOnError="ErrorAndContinue" />
     <ProcessPlotInput
         Condition=" '%(TestApk.ApkSizesDefinitionFilename)' != '' "
         InputFilename="$(OutputPath)%(TestApk.ApkSizesInputFilename)"
@@ -256,7 +292,8 @@
         ResultsFilename="%(TestApk.ApkSizesResultsFilename)"
         DefinitionsFilename="%(TestApk.ApkSizesDefinitionFilename)"
         AddResults="True"
-        LabelSuffix="-$(Configuration)$(TestsAotName)"
+        LabelSuffix="-$(Configuration)$(TestsFlavor)"
+        ContinueOnError="ErrorAndContinue"
     />
   </Target>
 </Project>

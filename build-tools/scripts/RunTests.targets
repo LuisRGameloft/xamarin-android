@@ -5,61 +5,92 @@
     <_TopDir>$(MSBuildThisFileDirectory)..\..</_TopDir>
   </PropertyGroup>
   <Import Project="$(_TopDir)\Configuration.props" />
+  <UsingTask AssemblyFile="$(MSBuildThisFileDirectory)..\..\bin\Build$(Configuration)\xa-prep-tasks.dll" TaskName="Xamarin.Android.BuildTools.PrepTasks.RunParallelTargets" />
   <UsingTask AssemblyFile="$(MSBuildThisFileDirectory)..\..\bin\Build$(Configuration)\xa-prep-tasks.dll" TaskName="Xamarin.Android.BuildTools.PrepTasks.SetEnvironmentVariable" />
   <PropertyGroup>
     <_Runtime Condition=" '$(HostOS)' != 'Windows' ">$(ManagedRuntime)</_Runtime>
     <_NUnit>$(_Runtime) packages\NUnit.ConsoleRunner.3.7.0\tools\nunit3-console.exe</_NUnit>
     <_Test Condition=" '$(TEST)' != '' ">--test=&quot;$(TEST)&quot;</_Test>
     <_XABuild>$(_TopDir)\bin\$(Configuration)\bin\xabuild</_XABuild>
-    <_XABuildProperties>/p:Configuration=$(Configuration) /p:XAIntegratedTests=$(XAIntegratedTests)</_XABuildProperties>
+    <_XABinLogPrefix>/v:normal /binaryLogger:"$(MSBuildThisFileDirectory)\..\..\bin\Build$(Configuration)\msbuild</_XABinLogPrefix>
+    <_XABuildDiag Condition=" '$(USE_MSBUILD)' == '0' And '$(V)' != '' ">/v:diag </_XABuildDiag>
+    <_XABuildProperties>$(_XABuildDiag)/p:Configuration=$(Configuration) /p:XAIntegratedTests=$(XAIntegratedTests)</_XABuildProperties>
   </PropertyGroup>
   <ItemGroup>
     <_TestAssembly Include="$(_TopDir)\bin\Test$(Configuration)\Xamarin.Android.Build.Tests.dll" />
+    <_TestAssembly Include="$(_TopDir)\bin\Test$(Configuration)\CodeBehind\CodeBehindUnitTests.dll" />
+    <_TestAssembly Include="$(_TopDir)\bin\Test$(Configuration)\EmbeddedDSO\EmbeddedDSOUnitTests.dll" />
+    <_TestAssembly Include="$(_TopDir)\bin\Test$(Configuration)\Xamarin.Android.MakeBundle-UnitTests\Xamarin.Android.MakeBundle-UnitTests.dll" />
     <_ApkTestProject Include="$(_TopDir)\src\Mono.Android\Test\Mono.Android-Tests.csproj" />
     <_ApkTestProject Include="$(_TopDir)\tests\CodeGen-Binding\Xamarin.Android.JcwGen-Tests\Xamarin.Android.JcwGen-Tests.csproj" />
     <_ApkTestProject Include="$(_TopDir)\tests\CodeGen-MkBundle\Xamarin.Android.MakeBundle-Tests\Xamarin.Android.MakeBundle-Tests.csproj" />
     <_ApkTestProject Include="$(_TopDir)\tests\locales\Xamarin.Android.Locale-Tests\Xamarin.Android.Locale-Tests.csproj" />
     <_ApkTestProject Include="$(_TopDir)\tests\BCL-Tests\Xamarin.Android.Bcl-Tests\Xamarin.Android.Bcl-Tests.csproj" />
     <_ApkTestProject Include="$(_TopDir)\tests\Xamarin.Forms-Performance-Integration\Droid\Xamarin.Forms.Performance.Integration.Droid.csproj" />
+    <_ApkTestProject Include="$(_TopDir)\tests\EmbeddedDSOs\EmbeddedDSO\EmbeddedDSO.csproj" />
+    <_ApkTestProject Include="$(_TopDir)\tests\Runtime-MultiDex\Mono.Android-TestsMultiDex.csproj" />
     <_ApkTestProjectAot Include="$(_TopDir)\src\Mono.Android\Test\Mono.Android-Tests.csproj" />
+    <_ApkTestProjectBundle Include="$(_TopDir)\src\Mono.Android\Test\Mono.Android-Tests.csproj" />
   </ItemGroup>
-  <Target Name="RunNUnitTests">
-    <SetEnvironmentVariable Name="USE_MSBUILD" Value="0" Condition=" '$(USE_MSBUILD)' == '' " />
+  <Target Name="ListNUnitTests">
     <Exec
-        Command="$(_NUnit) $(NUNIT_EXTRA) %(_TestAssembly.Identity) $(_Test) --result=&quot;TestResult-%(Filename).xml;format=nunit2&quot; --output=&quot;bin\Test$(Configuration)\TestOutput-%(Filename).txt&quot;"
+        Command="$(_NUnit) $(NUNIT_EXTRA) --explore %(_TestAssembly.Identity)"
         WorkingDirectory="$(_TopDir)"
         ContinueOnError="ErrorAndContinue"
     />
+  </Target>
+  <Target Name="RunNUnitTests">
+    <SetEnvironmentVariable Name="USE_MSBUILD" Value="0" Condition=" '$(USE_MSBUILD)' == '' " />
     <ItemGroup>
-      <_RenameTestCasesGlob Include="$(_TopDir)\TestResult-*Tests.xml" />
+      <NUnitTarget Include="@(_TestAssembly)">
+         <TestFilename>%(_TestAssembly.Filename)</TestFilename>
+         <NUnitOutput Condition=" '$(HostOS)' != 'Windows' " >| tee &quot;bin\Test$(Configuration)\TestOutput-%(_TestAssembly.Filename).txt&quot;</NUnitOutput>
+         <NUnitOutput Condition=" '$(HostOS)' == 'Windows'  ">--output=&quot;bin\Test$(Configuration)\TestOutput-%(_TestAssembly.Filename).txt&quot;</NUnitOutput>
+      </NUnitTarget>
+    </ItemGroup>
+    <Exec
+        Command="$(_NUnit) $(NUNIT_EXTRA) %(NUnitTarget.Identity) $(_Test) --labels=all --result=&quot;TestResult-%(NUnitTarget.TestFilename).xml;format=nunit2&quot; %(NUnitTarget.NUnitOutput)"
+        WorkingDirectory="$(_TopDir)"
+        IgnoreStandardErrorWarningFormat="true"
+        ContinueOnError="ErrorAndContinue"
+    />
+    <ItemGroup>
+      <_RenameNUnitTestCasesGlob Include="$(_TopDir)\TestResult-*Tests.xml" />
     </ItemGroup>
     <PropertyGroup>
-      <_RenamedTestCases>@(_RenameTestCasesGlob)</_RenamedTestCases>
+      <_RenamedTestCases>@(_RenameNUnitTestCasesGlob)</_RenamedTestCases>
     </PropertyGroup>
     <MSBuild
+        ContinueOnError="ErrorAndContinue"
         Projects="$(MSBuildThisFileDirectory)TestApks.targets"
         Targets="RenameTestCases"
         Properties="Configuration=$(Configuration);RenameTestCasesGlob=$(_RenamedTestCases)"
     />
   </Target>
   <Target Name="RunJavaInteropTests">
-    <MSBuild Projects="$(JavaInteropSourceDirectory)\Java.Interop.sln" Condition=" '$(HostOS)' == 'Windows' " />
+    <MSBuild
+        Condition=" '$(HostOS)' == 'Windows' "
+        ContinueOnError="ErrorAndContinue"
+        Projects="$(JavaInteropSourceDirectory)\Java.Interop.sln"
+    />
     <Exec
         Command ="make -C &quot;$(JavaInteropSourceDirectory)&quot; CONFIGURATION=$(Configuration) all"
         Condition=" '$(HostOS)' != 'Windows' "
     />
     <SetEnvironmentVariable Name="ANDROID_SDK_PATH" Value="$(AndroidSdkFullPath)" />
     <MSBuild 
+        ContinueOnError="ErrorAndContinue"
         Projects="$(JavaInteropSourceDirectory)\build-tools\scripts\RunNUnitTests.targets"
         Properties="AndroidSdkDirectory=$(AndroidSdkDirectory)"
     />
     <ItemGroup>
-      <_RenameTestCasesGlob Include="$(JavaInteropSourceDirectory)\TestResult-*Tests.xml" />
+      <_RenameJITestCasesGlob Include="$(JavaInteropSourceDirectory)\TestResult-*Tests.xml" />
     </ItemGroup>
     <PropertyGroup>
-      <_RenamedTestCases>@(_RenameTestCasesGlob)</_RenamedTestCases>
+      <_RenamedTestCases>@(_RenameJITestCasesGlob)</_RenamedTestCases>
     </PropertyGroup>
     <MSBuild
+        ContinueOnError="ErrorAndContinue"
         Projects="$(MSBuildThisFileDirectory)TestApks.targets"
         Targets="RenameTestCases"
         Properties="Configuration=$(Configuration);RenameTestCasesGlob=$(_RenamedTestCases)"
@@ -71,17 +102,72 @@
     <Delete Files="@(_JavaInteropTestResults)" />
   </Target>
   <Target Name="RunApkTests">
-    <Exec Command="$(_XABuild) %(_ApkTestProject.Identity) /t:SignAndroidPackage $(_XABuildProperties)" />
-    <MSBuild Projects="$(_TopDir)\tests\RunApkTests.targets" />
+    <ItemGroup Condition=" '$(USE_MSBUILD)' == '1' ">
+      <_ApkTestProject>
+        <_BinLog>$(_XABinLogPrefix)-$([System.DateTime]::Now.ToString ("yyyyMMddTHHmmss"))-%(Filename).binlog"</_BinLog>
+      </_ApkTestProject>
+    </ItemGroup>
+    <Exec Command="$(_XABuild) %(_ApkTestProject.Identity) %(_ApkTestProject._BinLog) /t:SignAndroidPackage $(_XABuildProperties)" />
+    <MSBuild
+        ContinueOnError="ErrorAndContinue"
+        Projects="$(_TopDir)\tests\RunApkTests.targets"
+    />
+    <ItemGroup Condition=" '$(USE_MSBUILD)' == '1' ">
+      <_ApkTestProjectAot>
+        <_BinLog>$(_XABinLogPrefix)-$([System.DateTime]::Now.ToString ("yyyyMMddTHHmmss"))-%(Filename)-AOT.binlog"</_BinLog>
+      </_ApkTestProjectAot>
+    </ItemGroup>
     <Exec 
-        Command="$(_XABuild) %(_ApkTestProjectAot.Identity) /t:SignAndroidPackage $(_XABuildProperties) /p:AotAssemblies=True"
+        Command="$(_XABuild) %(_ApkTestProjectAot.Identity) %(_ApkTestProjectAot._BinLog) /t:SignAndroidPackage $(_XABuildProperties) /p:AotAssemblies=True"
         Condition=" '$(Configuration)' == 'Release' "
     />
     <MSBuild 
+        ContinueOnError="ErrorAndContinue"
         Projects="$(_TopDir)\tests\RunApkTests.targets"
         Condition=" '$(Configuration)' == 'Release' "
         Properties="AotAssemblies=True"
     />
+    <ItemGroup Condition=" '$(USE_MSBUILD)' == '1' ">
+      <_ApkTestProjectBundle>
+        <_BinLog>$(_XABinLogPrefix)-$([System.DateTime]::Now.ToString ("yyyyMMddTHHmmss"))-%(Filename)-Bundle.binlog"</_BinLog>
+      </_ApkTestProjectBundle>
+    </ItemGroup>
+    <Exec
+        Command="$(_XABuild) %(_ApkTestProjectBundle.Identity) %(_ApkTestProjectBundle._BinLog) /t:SignAndroidPackage $(_XABuildProperties) /p:BundleAssemblies=True /p:EmbedAssembliesIntoApk=True"
+        Condition=" '$(Configuration)' == 'Release' "
+    />
+    <MSBuild
+        ContinueOnError="ErrorAndContinue"
+        Projects="$(_TopDir)\tests\RunApkTests.targets"
+        Condition=" '$(Configuration)' == 'Release' "
+        Properties="BundleAssemblies=True"
+    />
   </Target>
-  <Target Name="RunAllTests" DependsOnTargets="RunNUnitTests;RunJavaInteropTests;RunApkTests" />
+  <Target Name="RunPerformanceTests">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\timing\timing.csproj" Targets="MSBuildTiming" />
+  </Target>
+  <ItemGroup>
+    <_RunParallelTestTarget Include="RunNUnitTests" />
+    <_RunParallelTestTarget Include="RunApkTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <_RunTestTarget Include="RunJavaInteropTests" />
+    <_RunTestTarget Include="RunPerformanceTests" />
+  </ItemGroup>
+  <Target Name="RunAllTests">
+    <RunParallelTargets
+        ContinueOnError="ErrorAndContinue"
+        Configuration="$(Configuration)"
+        MSBuildBinaryLogParameterPrefix="$(_XABinLogPrefix)"
+        MSBuildBinPath="$(MSBuildBinPath)"
+        ProjectFile="$(MSBuildThisFileDirectory)RunTests.targets"
+        Targets="@(_RunParallelTestTarget)"
+    />
+    <MSBuild
+         ContinueOnError="ErrorAndContinue"
+         Projects="$(MSBuildThisFileDirectory)RunTests.targets"
+         RunEachTargetSeparately="True"
+         Targets="@(_RunTestTarget)"
+     />
+   </Target>
 </Project>

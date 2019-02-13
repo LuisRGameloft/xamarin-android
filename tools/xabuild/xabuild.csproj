@@ -1,6 +1,8 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <Import Project="..\..\Configuration.props" />
+  <Import Project="..\..\build-tools\scripts\MSBuildReferences.projitems" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -13,13 +15,10 @@
     <TargetFrameworkProfile />
     <_MSBuildExtension Condition=" '$(OS)' == 'Windows_NT' ">exe</_MSBuildExtension>
     <_MSBuildExtension Condition=" '$(OS)' != 'Windows_NT' ">dll</_MSBuildExtension>
-    <_MSBuildToolsPath Condition=" !$(MSBuildToolsPath.Contains('xbuild')) ">$(MSBuildToolsPath)</_MSBuildToolsPath>
-    <_MSBuildToolsPath Condition=" $(MSBuildToolsPath.Contains('xbuild')) ">$([System.IO.Path]::GetFullPath ('$(MSBuildToolsPath)\..\..\..\msbuild\15.0\bin'))</_MSBuildToolsPath>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>x86</PlatformTarget>
     <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>..\..\bin\Debug\bin</OutputPath>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
@@ -28,7 +27,6 @@
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <PlatformTarget>x86</PlatformTarget>
-    <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>..\..\bin\Release\bin</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
@@ -37,13 +35,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="MSBuild">
-      <HintPath>$(_MSBuildToolsPath)\MSBuild.$(_MSBuildExtension)</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.Build.Tasks.Core">
-      <HintPath>$(_MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.Build.Utilities.Core">
-      <HintPath>$(_MSBuildToolsPath)\Microsoft.Build.Utilities.Core.dll</HintPath>
+      <HintPath>$(MSBuildReferencePath)\MSBuild.$(_MSBuildExtension)</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />

@@ -8,7 +8,6 @@ using Microsoft.Build.Utilities;
 using System.Text;
 using System.Collections.Generic;
 using Xamarin.Android.Tools;
-using Xamarin.Android.Tools.Aidl;
 
 namespace Xamarin.Android.Tasks
 {
@@ -29,7 +28,6 @@ namespace Xamarin.Android.Tasks
 		[Required]
 		public string OutputDirectory { get; set; }
 
-		public string InputClassesDirectory { get; set; }
 
 		public string [] InputJars { get; set; }
 
@@ -38,15 +36,6 @@ namespace Xamarin.Android.Tasks
 
 		public override bool Execute ()
 		{
-			Log.LogDebugMessage ("Desugar Task");
-			Log.LogDebugMessage ("  JavaPlatformJarPath: ", JavaPlatformJarPath);
-			Log.LogDebugMessage ("  DesugarJarPath: ", DesugarJarPath);
-			Log.LogDebugMessage ("  DesugarExtraArguments: ", DesugarExtraArguments);
-			Log.LogDebugMessage ("  ManifestFile: ", ManifestFile);
-			Log.LogDebugMessage ("  OutputDirectory: ", OutputDirectory);
-			Log.LogDebugMessage ("  InputClassesDirectory: ", InputClassesDirectory);
-			Log.LogDebugTaskItems ("  InputJars: ", InputJars);
-
 			if (!Directory.Exists (OutputDirectory))
 				Directory.CreateDirectory (OutputDirectory);
 
@@ -85,24 +74,23 @@ namespace Xamarin.Android.Tasks
 
 			cmd.AppendSwitch ("--min_sdk_version ");
 			cmd.AppendSwitch (minApiVersion.ToString ());
+			
+			if (minApiVersion < 24) {
+				cmd.AppendSwitch("--desugar_try_with_resources_omit_runtime_classes ");
+			}
 
 			//cmd.AppendSwitchIfNotNull ("-J-Dfile.encoding=", "UTF8");
 
 			if (!string.IsNullOrEmpty (DesugarExtraArguments))
 				cmd.AppendSwitch (DesugarExtraArguments); // it should contain "--dex".
 
-			if (!string.IsNullOrEmpty (InputClassesDirectory)) {
-				cmd.AppendSwitch ("--input ");
-				cmd.AppendFileNameIfNotNull (InputClassesDirectory);
-				cmd.AppendSwitch ("--output ");
-				cmd.AppendFileNameIfNotNull (Path.Combine (OutputDirectory, "__app_classes__.jar"));
-			}
-
 			var outputs = new List<string> ();
 			var md5 = System.Security.Cryptography.MD5.Create ();
 			foreach (var jar in InputJars) {
 				var output = Path.Combine (OutputDirectory, BitConverter.ToString (md5.ComputeHash (Encoding.UTF8.GetBytes (jar))) + Path.GetFileName (jar));
 				outputs.Add (output);
+				cmd.AppendSwitch ("--classpath_entry ");
+				cmd.AppendFileNameIfNotNull (jar);
 				cmd.AppendSwitch ("--input ");
 				cmd.AppendFileNameIfNotNull (jar);
 				cmd.AppendSwitch ("--output ");
@@ -110,7 +98,6 @@ namespace Xamarin.Android.Tasks
 			}
 
 			OutputJars = outputs.ToArray ();
-			Log.LogDebugTaskItems ("  OutputJars: ", OutputJars);
 
 			return cmd.ToString ();
 		}
